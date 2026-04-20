@@ -1,0 +1,58 @@
+/* ================================================
+   Bilingual Subtitle Overlay
+   ================================================
+   #yt-bilingual-sub is our own div appended INSIDE
+   .html5-video-player so it stays centered and
+   scales correctly with fullscreen.
+   Font/color/bg are set by JS via getComputedStyle.
+   ================================================ */
+
+/* The translated subtitle overlay */
+#yt-bilingual-sub {
+  position: absolute;
+  bottom: 55px;          /* just above the control bar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+
+  /* layout */
+  max-width: 80%;
+  padding: 4px 10px;
+  border-radius: 3px;
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  /* font/color defaults — JS overrides these via getComputedStyle */
+  color: #ffffff;
+  background-color: rgba(8, 8, 8, 0.75);
+  font-family: 'YouTube Noto', Roboto, Arial, sans-serif;
+  font-size: 24px;
+  line-height: 1.4;
+
+  /* smooth appearance */
+  transition: opacity 0.15s ease;
+  pointer-events: none;  /* don't block mouse events on the video */
+}
+
+/* Loading state animation */
+#yt-bilingual-sub.loading {
+  opacity: 0.7;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+  100% { opacity: 0.5; }
+}
+
+/* When YouTube controls bar is shown, bump subtitle up */
+.ytp-autohide #yt-bilingual-sub {
+  bottom: 10px;
+}
+
+/* Hide old v1 overlay */
+#yt-bilingual-overlay {
+  display: none !important;
+}
