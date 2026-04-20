@@ -201,9 +201,7 @@ function updateBilingualSegments(originalText, translatedText) {
     .filter(el => !el.closest('[data-bilingual]'));
 
   allSegments.forEach(seg => {
-    if (seg.closest('[data-bilingual-wrapper]')) return;
-    
-    // Create a wrapper to hold both original and translated
+    // Get or create wrapper
     let wrapper = seg.closest('[data-bilingual-wrapper]');
     if (!wrapper) {
       wrapper = document.createElement('span');
@@ -213,17 +211,22 @@ function updateBilingualSegments(originalText, translatedText) {
       wrapper.appendChild(seg);
     }
     
-    // Remove any existing translated span
-    const existingTrans = wrapper.querySelector('.bilingual-translated');
-    if (existingTrans) existingTrans.remove();
-    
-    if (translatedText) {
-      // Create translated text span
-      const transSpan = document.createElement('span');
+    // Get or create translated span
+    let transSpan = wrapper.querySelector('.bilingual-translated');
+    if (!transSpan) {
+      transSpan = document.createElement('span');
       transSpan.className = 'bilingual-translated';
       transSpan.dataset.bilingual = 'true';
-      transSpan.textContent = translatedText;
       wrapper.appendChild(transSpan);
+    }
+    
+    // Update translated text
+    if (translatedText) {
+      transSpan.textContent = translatedText;
+      transSpan.style.display = 'block';
+    } else {
+      transSpan.textContent = '';
+      transSpan.style.display = 'none';
     }
   });
 }
