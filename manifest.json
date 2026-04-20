@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Bilingual Subtitles",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Dịch phụ đề YouTube sang song ngữ realtime.",
   "permissions": [
     "storage",

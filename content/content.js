@@ -68,6 +68,7 @@ const urlObserver = new MutationObserver(() => {
     lastOriginalText = '';
     translationGeneration++;
     removeOverlay();
+    removeBilingualWrappers();
     showOriginalCaptions();
     stopObserving();
     if (isEnabled && subtitleMode !== 'original-only') {
@@ -98,16 +99,27 @@ function waitForPlayerAndObserve() {
 
   subtitleObserver = new MutationObserver((mutations) => {
     if (isInjecting) return;
+    // Check if any mutation affects real YouTube caption segments (not our wrappers)
     const hasRealChange = mutations.some(m => {
-      if (m.target.closest && m.target.closest('[data-bilingual]')) return false;
+      // Skip if target is our bilingual wrapper
+      if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
+      // Check added nodes
       if (m.addedNodes.length > 0) {
         return [...m.addedNodes].some(n =>
           n.nodeType === Node.ELEMENT_NODE &&
           !n.dataset?.bilingual &&
-          !(n.closest && n.closest('[data-bilingual]'))
+          !(n.closest && n.closest('[data-bilingual-wrapper]'))
         );
       }
-      return m.type === 'characterData';
+      // Check for text content changes
+      if (m.type === 'characterData') {
+        return !m.target.closest?.('[data-bilingual-wrapper]');
+      }
+      // Check removed nodes
+      if (m.removedNodes.length > 0) {
+        return true; // Always process removals
+      }
+      return false;
     });
     if (hasRealChange) handleSubtitleUpdate();
   });
@@ -133,12 +145,13 @@ function handleSubtitleUpdate() {
 
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    // Collect text from YouTube's original segments only
+    // Collect text from YouTube's original segments only (not inside bilingual wrapper)
     const allSegments = [...document.querySelectorAll('.ytp-caption-segment')]
-      .filter(el => !el.closest('[data-bilingual]'));
+      .filter(el => !el.closest('[data-bilingual-wrapper]'));
 
     if (allSegments.length === 0) {
       removeOverlay();
+      removeBilingualWrappers();
       showOriginalCaptions();
       return;
     }
@@ -157,9 +170,9 @@ function handleSubtitleUpdate() {
     // Apply original visibility immediately (before translation arrives)
     applyOriginalVisibility();
 
-    // In bilingual mode: update original segments with bilingual content immediately
+    // In bilingual mode: wrap segments and show placeholder
     if (subtitleMode === 'bilingual') {
-      updateBilingualSegments(originalText, null);
+      wrapOriginalSegments();
     }
 
     pendingTranslation = true;
@@ -183,7 +196,8 @@ function handleSubtitleUpdate() {
             logDebug('Using fallback translation');
           }
           if (subtitleMode === 'bilingual') {
-            updateBilingualSegments(originalText, response.translatedText);
+            logDebug('Updating bilingual with translation:', response.translatedText);
+            updateBilingualSegments(response.translatedText);
           } else {
             renderOverlay(response.translatedText);
           }
@@ -195,20 +209,26 @@ function handleSubtitleUpdate() {
   }, 150);
 }
 
-// ── Update bilingual segments inline ─────────────────────────────────
-function updateBilingualSegments(originalText, translatedText) {
+// ── Wrap original segments in bilingual wrappers ─────────────────────
+function wrapOriginalSegments() {
+  // Get segments that are NOT inside a bilingual wrapper
   const allSegments = [...document.querySelectorAll('.ytp-caption-segment')]
-    .filter(el => !el.closest('[data-bilingual]'));
+    .filter(el => !el.closest('[data-bilingual-wrapper]'));
 
-  allSegments.forEach(seg => {
+  logDebug('wrapOriginalSegments called with:', allSegments.length, 'segments');
+
+  allSegments.forEach((seg, index) => {
     // Get or create wrapper
     let wrapper = seg.closest('[data-bilingual-wrapper]');
     if (!wrapper) {
       wrapper = document.createElement('span');
       wrapper.dataset.bilingual = 'true';
       wrapper.dataset.bilingualWrapper = 'true';
+      wrapper.style.display = 'inline';
+      wrapper.style.whiteSpace = 'pre-wrap';
       seg.parentNode.insertBefore(wrapper, seg);
       wrapper.appendChild(seg);
+      logDebug('Created wrapper for segment', index);
     }
     
     // Get or create translated span
@@ -217,13 +237,38 @@ function updateBilingualSegments(originalText, translatedText) {
       transSpan = document.createElement('span');
       transSpan.className = 'bilingual-translated';
       transSpan.dataset.bilingual = 'true';
+      transSpan.style.display = 'block';
+      transSpan.style.color = '#FFD54F';
       wrapper.appendChild(transSpan);
+      logDebug('Created translated span for segment', index);
+    }
+  });
+}
+
+// ── Update bilingual segments with translation ───────────────────────
+function updateBilingualSegments(translatedText) {
+  // Get all wrappers (already wrapped segments)
+  const wrappers = document.querySelectorAll('[data-bilingual-wrapper]');
+
+  logDebug('updateBilingualSegments called with:', { translatedText, wrapperCount: wrappers.length });
+
+  wrappers.forEach((wrapper, index) => {
+    let transSpan = wrapper.querySelector('.bilingual-translated');
+    if (!transSpan) {
+      transSpan = document.createElement('span');
+      transSpan.className = 'bilingual-translated';
+      transSpan.dataset.bilingual = 'true';
+      transSpan.style.display = 'block';
+      transSpan.style.color = '#FFD54F';
+      wrapper.appendChild(transSpan);
+      logDebug('Created translated span for segment', index);
     }
     
     // Update translated text
     if (translatedText) {
       transSpan.textContent = translatedText;
       transSpan.style.display = 'block';
+      logDebug('Set translated text:', translatedText);
     } else {
       transSpan.textContent = '';
       transSpan.style.display = 'none';
@@ -329,21 +374,5 @@ function showOriginalCaptions() {
   });
 }
 
-// ── YouTube SPA navigation ───────────────────────────────────────────
-let lastUrl = location.href;
-const urlObserver = new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    lastOriginalText = '';
-    translationGeneration++;
-    removeOverlay();
-    removeBilingualWrappers();
-    showOriginalCaptions();
-    stopObserving();
-    if (isEnabled && subtitleMode !== 'original-only') {
-      waitForPlayerAndObserve();
-    }
-    logDebug('URL changed to:', location.href);
-  }
-});
-urlObserver.observe(document.body, { childList: true, subtree: true });
+// ── YouTube SPA navigation (already handled above at line 64-79) ─────
+// No need to duplicate urlObserver
