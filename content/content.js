@@ -20,6 +20,11 @@ function logDebug(...args) {
   }
 }
 
+// Always log (for Shadow DOM debugging)
+function logAlways(...args) {
+  console.log('[YouTube Bilingual Subtitles]', ...args);
+}
+
 // ── Initialize from storage ──────────────────────────────────────────
 chrome.storage.sync.get(['targetLang', 'isEnabled', 'subtitleMode', 'debugMode'], (data) => {
   if (data.targetLang)   targetLang   = data.targetLang;
@@ -93,6 +98,7 @@ function waitForPlayerAndObserve() {
   if (subtitleObserver) return;
 
   const captionArea = document.querySelector('.ytp-caption-window-container');
+  logAlways('Looking for captionArea...', captionArea ? 'FOUND' : 'NOT FOUND');
   if (!captionArea) {
     setTimeout(waitForPlayerAndObserve, 1000);
     return;
@@ -135,6 +141,7 @@ function waitForPlayerAndObserve() {
   
   // Also observe the Shadow DOM if it exists
   const shadowRoot = captionArea.shadowRoot;
+  logAlways('Shadow DOM detected:', shadowRoot ? 'YES' : 'NO');
   if (shadowRoot && !shadowObserver) {
     shadowObserver = new MutationObserver((mutations) => {
       if (isInjecting) return;
@@ -281,7 +288,8 @@ function findCaptionSegments() {
     if (shadowRoot) {
       const shadowSegments = shadowRoot.querySelectorAll('.ytp-caption-segment');
       shadowSegments.forEach(seg => segments.push(seg));
-      logDebug('Found segments in Shadow DOM');
+      logAlways('Found segments in Shadow DOM:', shadowSegments.length);
+      logAlways('Total segments (Light + Shadow):', segments.length);
     }
   }
   
