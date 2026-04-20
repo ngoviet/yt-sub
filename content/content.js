@@ -2,6 +2,7 @@ let targetLang        = 'vi';
 let isEnabled         = true;
 let subtitleMode      = 'bilingual'; // 'bilingual' | 'translated-only' | 'original-only'
 let subtitleObserver  = null;
+let shadowObserver   = null;
 let isInjecting       = false;
 let lastOriginalText  = '';
 let debounceTimer     = null;
@@ -121,12 +122,50 @@ function waitForPlayerAndObserve() {
       }
       return false;
     });
-    if (hasRealChange) handleSubtitleUpdate();
+    if (hasRealChange) {
+      logDebug('Mutation detected, calling handleSubtitleUpdate');
+      handleSubtitleUpdate();
+    }
   });
 
+  // Observe the Light DOM
   subtitleObserver.observe(captionArea, {
     childList: true, subtree: true, characterData: true
   });
+  
+  // Also observe the Shadow DOM if it exists
+  const shadowRoot = captionArea.shadowRoot;
+  if (shadowRoot && !shadowObserver) {
+    shadowObserver = new MutationObserver((mutations) => {
+      if (isInjecting) return;
+      const hasRealChange = mutations.some(m => {
+        if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
+        if (m.addedNodes.length > 0) {
+          return [...m.addedNodes].some(n =>
+            n.nodeType === Node.ELEMENT_NODE &&
+            !n.dataset?.bilingual &&
+            !(n.closest && n.closest('[data-bilingual-wrapper]'))
+          );
+        }
+        if (m.type === 'characterData') {
+          return !m.target.closest?.('[data-bilingual-wrapper]');
+        }
+        if (m.removedNodes.length > 0) {
+          return true;
+        }
+        return false;
+      });
+      if (hasRealChange) {
+        logDebug('Shadow DOM mutation detected, calling handleSubtitleUpdate');
+        handleSubtitleUpdate();
+      }
+    });
+    
+    shadowObserver.observe(shadowRoot, {
+      childList: true, subtree: true, characterData: true
+    });
+    logDebug('Shadow DOM observer started');
+  }
   
   logDebug('Subtitle observer started');
 }
@@ -135,6 +174,10 @@ function stopObserving() {
   if (subtitleObserver) {
     subtitleObserver.disconnect();
     subtitleObserver = null;
+  }
+  if (shadowObserver) {
+    shadowObserver.disconnect();
+    shadowObserver = null;
   }
   logDebug('Subtitle observer stopped');
 }
@@ -146,8 +189,9 @@ function handleSubtitleUpdate() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     // Collect text from YouTube's original segments only (not inside bilingual wrapper)
-    const allSegments = [...document.querySelectorAll('.ytp-caption-segment')]
-      .filter(el => !el.closest('[data-bilingual-wrapper]'));
+    const allSegments = findCaptionSegments();
+    
+    logDebug('Found segments:', allSegments.length);
 
     if (allSegments.length === 0) {
       removeOverlay();
@@ -173,6 +217,19 @@ function handleSubtitleUpdate() {
     // In bilingual mode: wrap segments and show placeholder
     if (subtitleMode === 'bilingual') {
       wrapOriginalSegments();
+      logDebug('After wrap, checking for wrappers...');
+      // Check if wrappers were actually created
+      const captionArea = document.querySelector('.ytp-caption-window-container');
+      if (captionArea) {
+        const shadowRoot = captionArea.shadowRoot;
+        if (shadowRoot) {
+          const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
+          logDebug('Found wrappers in Shadow DOM:', shadowWrappers.length);
+        } else {
+          const lightWrappers = captionArea.querySelectorAll('[data-bilingual-wrapper]');
+          logDebug('Found wrappers in Light DOM:', lightWrappers.length);
+        }
+      }
     }
 
     pendingTranslation = true;
@@ -209,10 +266,32 @@ function handleSubtitleUpdate() {
   }, 150);
 }
 
+// ── Find caption segments in both Light and Shadow DOM ───────────────
+function findCaptionSegments() {
+  const segments = [];
+  
+  // Check Light DOM
+  const lightSegments = document.querySelectorAll('.ytp-caption-segment');
+  lightSegments.forEach(seg => segments.push(seg));
+  
+  // Check Shadow DOM of caption container
+  const captionArea = document.querySelector('.ytp-caption-window-container');
+  if (captionArea) {
+    const shadowRoot = captionArea.shadowRoot;
+    if (shadowRoot) {
+      const shadowSegments = shadowRoot.querySelectorAll('.ytp-caption-segment');
+      shadowSegments.forEach(seg => segments.push(seg));
+      logDebug('Found segments in Shadow DOM');
+    }
+  }
+  
+  return segments;
+}
+
 // ── Wrap original segments in bilingual wrappers ─────────────────────
 function wrapOriginalSegments() {
-  // Get segments that are NOT inside a bilingual wrapper
-  const allSegments = [...document.querySelectorAll('.ytp-caption-segment')]
+  // Get segments from both Light and Shadow DOM
+  const allSegments = findCaptionSegments()
     .filter(el => !el.closest('[data-bilingual-wrapper]'));
 
   logDebug('wrapOriginalSegments called with:', allSegments.length, 'segments');
@@ -247,9 +326,24 @@ function wrapOriginalSegments() {
 
 // ── Update bilingual segments with translation ───────────────────────
 function updateBilingualSegments(translatedText) {
-  // Get all wrappers (already wrapped segments)
-  const wrappers = document.querySelectorAll('[data-bilingual-wrapper]');
-
+  // Get wrappers from both Light and Shadow DOM
+  const wrappers = [];
+  
+  // Check Light DOM
+  const lightWrappers = document.querySelectorAll('[data-bilingual-wrapper]');
+  lightWrappers.forEach(w => wrappers.push(w));
+  
+  // Check Shadow DOM of caption container
+  const captionArea = document.querySelector('.ytp-caption-window-container');
+  if (captionArea) {
+    const shadowRoot = captionArea.shadowRoot;
+    if (shadowRoot) {
+      const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
+      shadowWrappers.forEach(w => wrappers.push(w));
+      logDebug('Found wrappers in Shadow DOM:', shadowWrappers.length);
+    }
+  }
+  
   logDebug('updateBilingualSegments called with:', { translatedText, wrapperCount: wrappers.length });
 
   wrappers.forEach((wrapper, index) => {
@@ -350,7 +444,22 @@ function removeOverlay() {
 
 // ── Remove bilingual wrappers ────────────────────────────────────────
 function removeBilingualWrappers() {
-  const wrappers = document.querySelectorAll('[data-bilingual-wrapper]');
+  const wrappers = [];
+  
+  // Check Light DOM
+  const lightWrappers = document.querySelectorAll('[data-bilingual-wrapper]');
+  lightWrappers.forEach(w => wrappers.push(w));
+  
+  // Check Shadow DOM of caption container
+  const captionArea = document.querySelector('.ytp-caption-window-container');
+  if (captionArea) {
+    const shadowRoot = captionArea.shadowRoot;
+    if (shadowRoot) {
+      const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
+      shadowWrappers.forEach(w => wrappers.push(w));
+    }
+  }
+  
   wrappers.forEach(wrapper => {
     const seg = wrapper.querySelector('.ytp-caption-segment');
     if (seg) {
