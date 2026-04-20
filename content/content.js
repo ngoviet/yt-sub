@@ -157,8 +157,11 @@ function handleSubtitleUpdate() {
     // Apply original visibility immediately (before translation arrives)
     applyOriginalVisibility();
 
-    // Don't show loading state - just send the translation request
-    // The previous translated text will remain visible until new translation arrives
+    // In bilingual mode: update original segments with bilingual content immediately
+    if (subtitleMode === 'bilingual') {
+      updateBilingualSegments(originalText, null);
+    }
+
     pendingTranslation = true;
 
     const gen = ++translationGeneration;
@@ -167,7 +170,6 @@ function handleSubtitleUpdate() {
       (response) => {
         if (chrome.runtime.lastError) {
           logDebug('Runtime error:', chrome.runtime.lastError.message);
-          renderError('Lỗi kết nối. Vui lòng thử lại.');
           pendingTranslation = false;
           return;
         }
@@ -180,13 +182,50 @@ function handleSubtitleUpdate() {
           if (response.isFallback) {
             logDebug('Using fallback translation');
           }
-          renderOverlay(response.translatedText);
+          if (subtitleMode === 'bilingual') {
+            updateBilingualSegments(originalText, response.translatedText);
+          } else {
+            renderOverlay(response.translatedText);
+          }
         } else {
           logDebug('No translation response');
         }
       }
     );
   }, 150);
+}
+
+// ── Update bilingual segments inline ─────────────────────────────────
+function updateBilingualSegments(originalText, translatedText) {
+  const allSegments = [...document.querySelectorAll('.ytp-caption-segment')]
+    .filter(el => !el.closest('[data-bilingual]'));
+
+  allSegments.forEach(seg => {
+    if (seg.closest('[data-bilingual-wrapper]')) return;
+    
+    // Create a wrapper to hold both original and translated
+    let wrapper = seg.closest('[data-bilingual-wrapper]');
+    if (!wrapper) {
+      wrapper = document.createElement('span');
+      wrapper.dataset.bilingual = 'true';
+      wrapper.dataset.bilingualWrapper = 'true';
+      seg.parentNode.insertBefore(wrapper, seg);
+      wrapper.appendChild(seg);
+    }
+    
+    // Remove any existing translated span
+    const existingTrans = wrapper.querySelector('.bilingual-translated');
+    if (existingTrans) existingTrans.remove();
+    
+    if (translatedText) {
+      // Create translated text span
+      const transSpan = document.createElement('span');
+      transSpan.className = 'bilingual-translated';
+      transSpan.dataset.bilingual = 'true';
+      transSpan.textContent = translatedText;
+      wrapper.appendChild(transSpan);
+    }
+  });
 }
 
 function hideLoadingState() {
@@ -261,6 +300,18 @@ function removeOverlay() {
   if (overlay) overlay.remove();
 }
 
+// ── Remove bilingual wrappers ────────────────────────────────────────
+function removeBilingualWrappers() {
+  const wrappers = document.querySelectorAll('[data-bilingual-wrapper]');
+  wrappers.forEach(wrapper => {
+    const seg = wrapper.querySelector('.ytp-caption-segment');
+    if (seg) {
+      wrapper.parentNode.insertBefore(seg, wrapper);
+    }
+    wrapper.remove();
+  });
+}
+
 // ── Original caption visibility ───────────────────────────────────────
 function applyOriginalVisibility() {
   const hidden = subtitleMode === 'translated-only';
@@ -274,3 +325,22 @@ function showOriginalCaptions() {
     el.style.visibility = '';
   });
 }
+
+// ── YouTube SPA navigation ───────────────────────────────────────────
+let lastUrl = location.href;
+const urlObserver = new MutationObserver(() => {
+  if (location.href !== lastUrl) {
+    lastUrl = location.href;
+    lastOriginalText = '';
+    translationGeneration++;
+    removeOverlay();
+    removeBilingualWrappers();
+    showOriginalCaptions();
+    stopObserving();
+    if (isEnabled && subtitleMode !== 'original-only') {
+      waitForPlayerAndObserve();
+    }
+    logDebug('URL changed to:', location.href);
+  }
+});
+urlObserver.observe(document.body, { childList: true, subtree: true });
