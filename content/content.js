@@ -157,22 +157,9 @@ function handleSubtitleUpdate() {
     // Apply original visibility immediately (before translation arrives)
     applyOriginalVisibility();
 
-    // Check if we have a pending translation from a recent request
-    const now = Date.now();
-    const timeSinceLastTranslation = now - lastTranslationTime;
-    
-    // Only show loading if:
-    // 1. Not already waiting for a translation
-    // 2. Either no previous translation or more than 3 seconds since last one
-    // This prevents flickering between consecutive subtitles
-    if (!pendingTranslation || timeSinceLastTranslation > 3000) {
-      pendingTranslation = true;
-      showLoadingState();
-    } else {
-      logDebug('Skipping loading state - pending translation, keeping previous overlay');
-      // Keep the previous translated text visible while waiting
-      return;
-    }
+    // Don't show loading state - just send the translation request
+    // The previous translated text will remain visible until new translation arrives
+    pendingTranslation = true;
 
     const gen = ++translationGeneration;
     chrome.runtime.sendMessage(
@@ -200,30 +187,6 @@ function handleSubtitleUpdate() {
       }
     );
   }, 150);
-}
-
-// ── Loading State ────────────────────────────────────────────────────
-function showLoadingState() {
-  if (isLoading) return;
-  isLoading = true;
-
-  const overlay = getOrCreateOverlay();
-  overlay.classList.add('loading');
-  overlay.textContent = 'Đang dịch...';
-  overlay.style.display = 'block';
-  overlay.style.color = '#FFD54F';
-
-  // Timeout after 8 seconds if no response (increased to avoid premature timeout)
-  clearTimeout(loadingTimeout);
-  loadingTimeout = setTimeout(() => {
-    if (isLoading) {
-      overlay.textContent = 'Hết giờ! Vui lòng thử lại.';
-      overlay.style.color = '#FF5252';
-      isLoading = false;
-      pendingTranslation = false;
-      logDebug('Loading timeout reached');
-    }
-  }, 8000);
 }
 
 function hideLoadingState() {
@@ -267,8 +230,6 @@ function getOrCreateOverlay() {
 }
 
 function renderOverlay(translatedText) {
-  hideLoadingState();
-  
   const overlay = getOrCreateOverlay();
 
   // Copy font/size from a real YouTube caption segment for a native look
