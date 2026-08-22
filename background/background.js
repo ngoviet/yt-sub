@@ -118,26 +118,23 @@ chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
 async function translateWithFallback(text, targetLang, cacheKey, sendResponse) {
   try {
     const translatedText = await translateWithRetry(text, targetLang);
-    
+
     // Cache result
     if (cacheKey) {
       translationCache.set(cacheKey, translatedText);
     }
-    
+
     sendResponse({ translatedText });
   } catch (error) {
     console.error('Translation failed:', error);
-    
+
     // Graceful degradation: return original text with indicator
+    // KHÔNG cache fallback — lỗi tạm thời (mạng/429) không nên dính cache vĩnh viễn
     const fallbackText = `[${targetLang}] ${text}`;
-    
-    if (cacheKey) {
-      translationCache.set(cacheKey, fallbackText);
-    }
-    
-    sendResponse({ 
+
+    sendResponse({
       translatedText: fallbackText,
-      isFallback: true 
+      isFallback: true
     });
   }
 }
@@ -165,12 +162,25 @@ async function translateWithRetry(text, targetLang, retryCount = 0) {
 async function translateText(text, targetLang) {
   const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
+  // Timeout 8s — request treo thì retry không bao giờ chạy, kênh message treo vô hạn
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
 
-  const data = await response.json();
-  // Google Translate API returns an array of arrays. The translated text is in the first element.
-  return data[0].map(item => item[0]).join('');
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    // Google Translate API returns an array of arrays. The translated text is in the first element.
+    return data[0].map(item => item[0]).join('');
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Translation request timed out');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }

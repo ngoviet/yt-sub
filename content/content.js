@@ -3,14 +3,21 @@ let isEnabled         = true;
 let subtitleMode      = 'bilingual'; // 'bilingual' | 'translated-only' | 'original-only'
 let subtitleObserver  = null;
 let shadowObserver   = null;
-let lastOriginalText  = '';
 let debounceTimer     = null;
 let translationGeneration = 0;
 let debugMode         = false;
+let pollTimer         = null;
+let pollAttempts      = 0;
+const MAX_POLL_ATTEMPTS = 30; // 30s tối đa chờ player
+
+// ── State dịch theo từng segment ───────────────────────────────────────
+const segmentStates = new Map(); // element → { text, translated }
+const inflight      = new Map(); // key 'text_targetLang' → Promise
 
 // ── Selectors (gom 1 chỗ — YouTube có thể đổi class) ─────────────────
 const CAPTION_AREA_SELECTOR = '.ytp-caption-window-container';
 const SEGMENT_SELECTOR      = '.ytp-caption-segment';
+const SETTINGS_KEYS         = ['targetLang', 'isEnabled', 'subtitleMode', 'debugMode'];
 
 // ── Debug Logger ──────────────────────────────────────────────────────
 function logDebug(...args) {
@@ -45,12 +52,39 @@ chrome.runtime.onMessage.addListener((request) => {
     subtitleMode = request.subtitleMode;
     isEnabled    = request.isEnabled;
     debugMode    = request.debugMode || debugMode;
-    lastOriginalText = '';
-    translationGeneration++;
+    resetTranslationState();
     applyMode();
     logDebug('Settings updated:', { targetLang, subtitleMode, isEnabled, debugMode });
   }
 });
+
+// ── Storage change: mọi tab YouTube tự cập nhật (không chỉ tab active) ─
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync') return;
+  let changed = false;
+  for (const key of SETTINGS_KEYS) {
+    const change = changes[key];
+    if (!change) continue;
+    if (key === 'targetLang'   && change.newValue !== targetLang)   { targetLang   = change.newValue; changed = true; }
+    if (key === 'isEnabled'    && change.newValue !== isEnabled)    { isEnabled    = change.newValue; changed = true; }
+    if (key === 'subtitleMode' && change.newValue !== subtitleMode) { subtitleMode = change.newValue; changed = true; }
+    if (key === 'debugMode'    && change.newValue !== debugMode)    { debugMode    = change.newValue; changed = true; }
+  }
+  if (changed) {
+    resetTranslationState();
+    applyMode();
+  }
+});
+
+// ── Reset mọi trạng thái dịch (settings đổi / SPA nav) ────────────────
+function resetTranslationState() {
+  segmentStates.clear();
+  inflight.clear();
+  translationGeneration++;
+  removeOverlay();
+  removeBilingualWrappers();
+  showOriginalCaptions();
+}
 
 // ── Apply current mode ───────────────────────────────────────────────
 function applyMode() {
@@ -65,23 +99,20 @@ function applyMode() {
 }
 
 // ── YouTube SPA navigation ───────────────────────────────────────────
+// `yt-navigate-finish` fire sau mỗi lần SPA navigation (rẻ hơn
+// MutationObserver quét toàn body subtree)
 let lastUrl = location.href;
-const urlObserver = new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    lastOriginalText = '';
-    translationGeneration++;
-    removeOverlay();
-    removeBilingualWrappers();
-    showOriginalCaptions();
-    stopObserving();
-    if (isEnabled && subtitleMode !== 'original-only') {
-      waitForPlayerAndObserve();
-    }
-    logDebug('URL changed to:', location.href);
+function onUrlChange() {
+  if (location.href === lastUrl) return;
+  lastUrl = location.href;
+  resetTranslationState();
+  stopObserving();
+  if (isEnabled && subtitleMode !== 'original-only') {
+    waitForPlayerAndObserve();
   }
-});
-urlObserver.observe(document.body, { childList: true, subtree: true });
+  logDebug('URL changed to:', location.href);
+}
+document.addEventListener('yt-navigate-finish', onUrlChange);
 
 // ── Observer setup ───────────────────────────────────────────────────
 function waitForPlayerAndObserve() {
@@ -90,9 +121,14 @@ function waitForPlayerAndObserve() {
   const captionArea = document.querySelector(CAPTION_AREA_SELECTOR);
   logDebug('Looking for captionArea...', captionArea ? 'FOUND' : 'NOT FOUND');
   if (!captionArea) {
-    setTimeout(waitForPlayerAndObserve, 1000);
+    // Giới hạn poll: 30 lần (30s) — không leak timer khi player không xuất hiện
+    if (pollAttempts < MAX_POLL_ATTEMPTS) {
+      pollAttempts++;
+      pollTimer = setTimeout(waitForPlayerAndObserve, 1000);
+    }
     return;
   }
+  pollAttempts = 0;
 
   subtitleObserver = new MutationObserver((mutations) => {
     if (mutations.some(isRealCaptionMutation)) {
@@ -127,6 +163,8 @@ function waitForPlayerAndObserve() {
 }
 
 function stopObserving() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
   if (subtitleObserver) {
     subtitleObserver.disconnect();
     subtitleObserver = null;
@@ -162,15 +200,14 @@ function isRealCaptionMutation(m) {
 }
 
 // ── Core subtitle update handler ─────────────────────────────────────
+// Dịch TỪNG segment riêng (fix lỗi nhân bản khi caption nhiều dòng),
+// dedupe request theo text qua inflight map.
 function handleSubtitleUpdate() {
   if (!isEnabled || subtitleMode === 'original-only') return;
 
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    // Collect text from YouTube's original segments only (not inside bilingual wrapper)
     const allSegments = findCaptionSegments();
-    
-    logDebug('Found segments:', allSegments.length);
 
     if (allSegments.length === 0) {
       removeOverlay();
@@ -179,64 +216,133 @@ function handleSubtitleUpdate() {
       return;
     }
 
-    const originalText = allSegments
-      .map(s => s.textContent)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Dọn state của segment đã bị YouTube gỡ khỏi DOM
+    for (const el of segmentStates.keys()) {
+      if (!el.isConnected) segmentStates.delete(el);
+    }
 
-    if (!originalText || originalText === lastOriginalText) return;
-    lastOriginalText = originalText;
-
-    logDebug('New subtitle detected:', originalText);
-
-    // Apply original visibility immediately (before translation arrives)
+    // Ẩn caption gốc ngay (translated-only) trước khi bản dịch tới
     applyOriginalVisibility();
 
-    // In bilingual mode: wrap segments and show placeholder
+    const needTranslate = [];
+    for (const seg of allSegments) {
+      const text = seg.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const st = segmentStates.get(seg);
+      if (!st || st.text !== text) {
+        segmentStates.set(seg, { text, translated: null });
+        needTranslate.push({ seg, text });
+      }
+    }
+
+    // Bilingual: đảm bảo wrapper tồn tại + render lại bản dịch đã cache
     if (subtitleMode === 'bilingual') {
       wrapOriginalSegments();
-      logDebug('After wrap, checking for wrappers...');
-      // Check if wrappers were actually created
-      const captionArea = document.querySelector('.ytp-caption-window-container');
-      if (captionArea) {
-        const shadowRoot = captionArea.shadowRoot;
-        if (shadowRoot) {
-          const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
-          logDebug('Found wrappers in Shadow DOM:', shadowWrappers.length);
-        } else {
-          const lightWrappers = captionArea.querySelectorAll('[data-bilingual-wrapper]');
-          logDebug('Found wrappers in Light DOM:', lightWrappers.length);
+      for (const seg of allSegments) {
+        const st = segmentStates.get(seg);
+        if (st && st.translated) {
+          const transSpan = getWrapperTransSpan(seg);
+          if (transSpan) {
+            transSpan.textContent = st.translated;
+            transSpan.style.display = 'block';
+          }
         }
       }
     }
 
-    const gen = ++translationGeneration;
-    chrome.runtime.sendMessage(
-      { action: 'translate', text: originalText, targetLang },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          logDebug('Runtime error:', chrome.runtime.lastError.message);
-          return;
-        }
-        if (gen !== translationGeneration) return;
+    // Gửi request cho text mới (dedupe: cùng text + đang inflight → chờ 1 request)
+    for (const { seg, text } of needTranslate) {
+      const gen = translationGeneration;
+      requestTranslation(text, targetLang).then((res) => {
+        if (gen !== translationGeneration) return; // settings đổi / SPA nav giữa chừng
+        const st = segmentStates.get(seg);
+        if (!st || st.text !== text || !seg.isConnected) return; // stale
+        st.translated = (res && res.translatedText) ? res.translatedText : text;
 
-        if (response && response.translatedText) {
-          if (response.isFallback) {
-            logDebug('Using fallback translation');
-          }
-          if (subtitleMode === 'bilingual') {
-            logDebug('Updating bilingual with translation:', response.translatedText);
-            updateBilingualSegments(response.translatedText);
-          } else {
-            renderOverlay(response.translatedText);
-          }
+        if (subtitleMode === 'translated-only') {
+          refreshTranslatedOverlay();
         } else {
-          logDebug('No translation response');
+          const transSpan = getWrapperTransSpan(seg);
+          if (transSpan) {
+            transSpan.textContent = st.translated;
+            transSpan.style.display = 'block';
+          }
         }
-      }
-    );
+      });
+    }
+
+    // translated-only: cập nhật overlay từ state (kể cả bản dịch đã cache)
+    if (subtitleMode === 'translated-only') {
+      refreshTranslatedOverlay();
+    }
   }, 150);
+}
+
+// ── Gửi request dịch, dedupe + watchdog (A3) ──────────────────────────
+function requestTranslation(text, targetLang) {
+  const key = `${text}_${targetLang}`;
+  if (inflight.has(key)) return inflight.get(key);
+
+  const promise = new Promise((resolve) => {
+    let responded = false;
+    let attempts = 0;
+    let watchdog = null;
+    const done = (res) => {
+      if (responded) return;
+      responded = true;
+      clearTimeout(watchdog);
+      resolve(res);
+    };
+    const send = () => {
+      attempts++;
+      if (attempts > 2) { done(null); return; } // watchdog resend tối đa 1 lần
+      chrome.runtime.sendMessage({ action: 'translate', text, targetLang }, (response) => {
+        if (chrome.runtime.lastError) { done(null); return; }
+        done(response);
+      });
+    };
+    send();
+    // SW có thể bị kill giữa chừng → callback không bao giờ chạy → resend 1 lần
+    watchdog = setTimeout(send, 12000);
+  });
+
+  inflight.set(key, promise);
+  promise.catch(() => {}).finally(() => inflight.delete(key));
+  return promise;
+}
+
+// ── Lấy translated span của segment (tạo wrapper nếu cần) ─────────────
+function getWrapperTransSpan(seg) {
+  let wrapper = seg.closest('[data-bilingual-wrapper]');
+  if (!wrapper) {
+    wrapper = document.createElement('span');
+    wrapper.dataset.bilingual = 'true';
+    wrapper.dataset.bilingualWrapper = 'true';
+    wrapper.style.display = 'inline';
+    wrapper.style.whiteSpace = 'pre-wrap';
+    seg.parentNode.insertBefore(wrapper, seg);
+    wrapper.appendChild(seg);
+  }
+  let transSpan = wrapper.querySelector('.bilingual-translated');
+  if (!transSpan) {
+    transSpan = createTranslatedSpan();
+    wrapper.appendChild(transSpan);
+  }
+  return transSpan;
+}
+
+// ── translated-only: gộp bản dịch từng segment vào overlay ────────────
+function refreshTranslatedOverlay() {
+  const parts = [];
+  for (const seg of findCaptionSegments()) {
+    const st = segmentStates.get(seg);
+    if (st && st.translated) parts.push(st.translated);
+  }
+  if (parts.length > 0) {
+    renderOverlay(parts.join(' '));
+  } else {
+    removeOverlay();
+  }
 }
 
 // ── Find caption segments in both Light and Shadow DOM ───────────────
@@ -280,31 +386,6 @@ function wrapOriginalSegments() {
     if (!wrapper.querySelector('.bilingual-translated')) {
       wrapper.appendChild(createTranslatedSpan());
       logDebug('Created translated span for segment', index);
-    }
-  });
-}
-
-// ── Update bilingual segments with translation ───────────────────────
-function updateBilingualSegments(translatedText) {
-  const wrappers = queryAllInRoots('[data-bilingual-wrapper]');
-  logDebug('updateBilingualSegments called with:', { translatedText, wrapperCount: wrappers.length });
-
-  wrappers.forEach((wrapper, index) => {
-    let transSpan = wrapper.querySelector('.bilingual-translated');
-    if (!transSpan) {
-      transSpan = createTranslatedSpan();
-      wrapper.appendChild(transSpan);
-      logDebug('Created translated span for segment', index);
-    }
-
-    // Update translated text
-    if (translatedText) {
-      transSpan.textContent = translatedText;
-      transSpan.style.display = 'block';
-      logDebug('Set translated text:', translatedText);
-    } else {
-      transSpan.textContent = '';
-      transSpan.style.display = 'none';
     }
   });
 }
