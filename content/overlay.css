@@ -14,7 +14,7 @@
 /* The translated subtitle overlay */
 #yt-bilingual-sub {
   position: absolute;
-  bottom: 55px;          /* just above the control bar */
+  bottom: var(--yt-bottom, 55px); /* JS set --yt-bottom theo user setting */
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
@@ -53,7 +53,7 @@
 
 /* When YouTube controls bar is shown, bump subtitle up */
 .ytp-autohide #yt-bilingual-sub {
-  bottom: 10px;
+  bottom: var(--yt-bottom-autohide, 10px);
 }
 
 /* ================================================

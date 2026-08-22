@@ -10,14 +10,19 @@ let pollTimer         = null;
 let pollAttempts      = 0;
 const MAX_POLL_ATTEMPTS = 30; // 30s tối đa chờ player
 
+// ── Overlay customization (B6) ────────────────────────────────────────
+let fontSizeScale = 1;
+let overlayBottom = 55;
+let accentColor   = '#FFD54F';
+
 // ── State dịch theo từng segment ───────────────────────────────────────
-const segmentStates = new Map(); // element → { text, translated }
+const segmentStates = new Map(); // element → { text, translated, lang }
 const inflight      = new Map(); // key 'text_targetLang' → Promise
 
 // ── Selectors (gom 1 chỗ — YouTube có thể đổi class) ─────────────────
 const CAPTION_AREA_SELECTOR = '.ytp-caption-window-container';
 const SEGMENT_SELECTOR      = '.ytp-caption-segment';
-const SETTINGS_KEYS         = ['targetLang', 'isEnabled', 'subtitleMode', 'debugMode'];
+const SETTINGS_KEYS         = ['targetLang', 'isEnabled', 'subtitleMode', 'debugMode', 'fontSizeScale', 'overlayBottom', 'accentColor'];
 
 // ── Debug Logger ──────────────────────────────────────────────────────
 function logDebug(...args) {
@@ -36,11 +41,15 @@ function queryAllInRoots(selector) {
 }
 
 // ── Initialize from storage ──────────────────────────────────────────
-chrome.storage.sync.get(['targetLang', 'isEnabled', 'subtitleMode', 'debugMode'], (data) => {
+chrome.storage.sync.get(['targetLang', 'isEnabled', 'subtitleMode', 'debugMode', 'fontSizeScale', 'overlayBottom', 'accentColor'], (data) => {
   if (data.targetLang)   targetLang   = data.targetLang;
   if (data.subtitleMode) subtitleMode = data.subtitleMode;
   if (data.isEnabled !== undefined) isEnabled = data.isEnabled;
   if (data.debugMode) debugMode = data.debugMode;
+  if (data.fontSizeScale) fontSizeScale = data.fontSizeScale;
+  if (data.overlayBottom) overlayBottom = data.overlayBottom;
+  if (data.accentColor)   accentColor   = data.accentColor;
+  applyAccentColor();
   applyMode();
   logDebug('Extension initialized with settings:', { targetLang, subtitleMode, isEnabled, debugMode });
 });
@@ -52,6 +61,10 @@ chrome.runtime.onMessage.addListener((request) => {
     subtitleMode = request.subtitleMode;
     isEnabled    = request.isEnabled;
     debugMode    = request.debugMode || debugMode;
+    if (request.fontSizeScale) fontSizeScale = request.fontSizeScale;
+    if (request.overlayBottom) overlayBottom = request.overlayBottom;
+    if (request.accentColor)   accentColor   = request.accentColor;
+    applyAccentColor();
     resetTranslationState();
     applyMode();
     logDebug('Settings updated:', { targetLang, subtitleMode, isEnabled, debugMode });
@@ -69,12 +82,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (key === 'isEnabled'    && change.newValue !== isEnabled)    { isEnabled    = change.newValue; changed = true; }
     if (key === 'subtitleMode' && change.newValue !== subtitleMode) { subtitleMode = change.newValue; changed = true; }
     if (key === 'debugMode'    && change.newValue !== debugMode)    { debugMode    = change.newValue; changed = true; }
+    if (key === 'fontSizeScale' && change.newValue !== fontSizeScale) { fontSizeScale = change.newValue; changed = true; }
+    if (key === 'overlayBottom' && change.newValue !== overlayBottom) { overlayBottom = change.newValue; changed = true; }
+    if (key === 'accentColor'  && change.newValue !== accentColor)  { accentColor  = change.newValue; changed = true; }
   }
   if (changed) {
+    applyAccentColor();
     resetTranslationState();
     applyMode();
   }
 });
+
+// ── Ghi màu nhấn vào CSS var --yt-accent (ảnh cả overlay lẫn bilingual) ─
+function applyAccentColor() {
+  document.documentElement.style.setProperty('--yt-accent', accentColor);
+}
 
 // ── Reset mọi trạng thái dịch (settings đổi / SPA nav) ────────────────
 function resetTranslationState() {
@@ -258,6 +280,7 @@ function handleSubtitleUpdate() {
         const st = segmentStates.get(seg);
         if (!st || st.text !== text || !seg.isConnected) return; // stale
         st.translated = (res && res.translatedText) ? res.translatedText : text;
+        st.lang = (res && res.detectedLang) ? res.detectedLang : null;
 
         if (subtitleMode === 'translated-only') {
           refreshTranslatedOverlay();
@@ -334,12 +357,16 @@ function getWrapperTransSpan(seg) {
 // ── translated-only: gộp bản dịch từng segment vào overlay ────────────
 function refreshTranslatedOverlay() {
   const parts = [];
+  let detectedLang = null;
   for (const seg of findCaptionSegments()) {
     const st = segmentStates.get(seg);
-    if (st && st.translated) parts.push(st.translated);
+    if (st && st.translated) {
+      parts.push(st.translated);
+      if (!detectedLang && st.lang) detectedLang = st.lang;
+    }
   }
   if (parts.length > 0) {
-    renderOverlay(parts.join(' '));
+    renderOverlay(parts.join(' '), detectedLang);
   } else {
     removeOverlay();
   }
@@ -411,31 +438,38 @@ function getOrCreateOverlay() {
   return overlay;
 }
 
-function renderOverlay(translatedText) {
+function renderOverlay(translatedText, detectedLang) {
   const overlay = getOrCreateOverlay();
 
-  // Copy font/size from a real YouTube caption segment for a native look
+  // Vị trí đáy user tùy chỉnh (CSS dùng var --yt-bottom)
+  overlay.style.setProperty('--yt-bottom', `${overlayBottom}px`);
+
+  // Copy font/size từ segment thật, nhân fontSizeScale user chọn
   const templateSeg = document.querySelector(`${SEGMENT_SELECTOR}:not([data-bilingual])`);
   if (templateSeg) {
     const cs = window.getComputedStyle(templateSeg);
     overlay.style.fontFamily    = cs.fontFamily;
-    overlay.style.fontSize      = cs.fontSize;
+    overlay.style.fontSize      = `${parseFloat(cs.fontSize) * fontSizeScale}px`;
     overlay.style.fontWeight    = cs.fontWeight;
     overlay.style.lineHeight    = cs.lineHeight;
     overlay.style.backgroundColor = cs.backgroundColor || 'rgba(8,8,8,0.75)';
     overlay.style.color         = (subtitleMode === 'translated-only') ? (cs.color || '#fff') : 'var(--yt-accent)';
   } else {
     overlay.style.fontFamily    = 'YouTube Noto, Roboto, Arial, sans-serif';
-    overlay.style.fontSize      = '24px';
+    overlay.style.fontSize      = `${24 * fontSizeScale}px`;
     overlay.style.fontWeight    = 'bold';
     overlay.style.backgroundColor = 'rgba(8,8,8,0.75)';
     overlay.style.color         = subtitleMode === 'translated-only' ? '#fff' : 'var(--yt-accent)';
   }
 
-  overlay.textContent   = translatedText;
+  // B7: prefix ngôn ngữ nguồn phát hiện được (vd "[EN] ...")
+  const prefix = (detectedLang && detectedLang !== targetLang)
+    ? `[${detectedLang.toUpperCase()}] `
+    : '';
+  overlay.textContent   = prefix + translatedText;
   overlay.style.display = 'block';
-  
-  logDebug('Overlay rendered:', translatedText);
+
+  logDebug('Overlay rendered:', overlay.textContent);
 }
 
 function removeOverlay() {
