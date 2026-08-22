@@ -4,9 +4,7 @@
   "version": "1.3.0",
   "description": "Dịch phụ đề YouTube sang song ngữ realtime.",
   "permissions": [
-    "storage",
-    "activeTab",
-    "scripting"
+    "storage"
   ],
   "host_permissions": [
     "https://*.youtube.com/*",

@@ -7,6 +7,10 @@
    Font/color/bg are set by JS via getComputedStyle.
    ================================================ */
 
+:root {
+  --yt-accent: #FFD54F;
+}
+
 /* The translated subtitle overlay */
 #yt-bilingual-sub {
   position: absolute;
@@ -52,11 +56,6 @@
   bottom: 10px;
 }
 
-/* Hide old v1 overlay */
-#yt-bilingual-overlay {
-  display: none !important;
-}
-
 /* ================================================
    Bilingual Inline Subtitle Styling
    ================================================
@@ -66,7 +65,7 @@
 
 .bilingual-translated {
   display: block;
-  color: #FFD54F;
+  color: var(--yt-accent);
   /* Inherit all font styles from parent (YouTube's caption segment) */
   font-family: inherit;
   font-size: inherit;

@@ -3,15 +3,14 @@ let isEnabled         = true;
 let subtitleMode      = 'bilingual'; // 'bilingual' | 'translated-only' | 'original-only'
 let subtitleObserver  = null;
 let shadowObserver   = null;
-let isInjecting       = false;
 let lastOriginalText  = '';
 let debounceTimer     = null;
 let translationGeneration = 0;
 let debugMode         = false;
-let isLoading         = false;
-let loadingTimeout    = null;
-let lastTranslationTime = 0;
-let pendingTranslation = false;
+
+// ── Selectors (gom 1 chỗ — YouTube có thể đổi class) ─────────────────
+const CAPTION_AREA_SELECTOR = '.ytp-caption-window-container';
+const SEGMENT_SELECTOR      = '.ytp-caption-segment';
 
 // ── Debug Logger ──────────────────────────────────────────────────────
 function logDebug(...args) {
@@ -20,9 +19,13 @@ function logDebug(...args) {
   }
 }
 
-// Always log (for Shadow DOM debugging)
-function logAlways(...args) {
-  console.log('[YouTube Bilingual Subtitles]', ...args);
+// ── Query cả Light DOM lẫn Shadow DOM của caption area ────────────────
+function queryAllInRoots(selector) {
+  const results = [...document.querySelectorAll(selector)];
+  const area = document.querySelector(CAPTION_AREA_SELECTOR);
+  const shadow = area && area.shadowRoot;
+  if (shadow) results.push(...shadow.querySelectorAll(selector));
+  return results;
 }
 
 // ── Initialize from storage ──────────────────────────────────────────
@@ -46,11 +49,6 @@ chrome.runtime.onMessage.addListener((request) => {
     translationGeneration++;
     applyMode();
     logDebug('Settings updated:', { targetLang, subtitleMode, isEnabled, debugMode });
-  }
-  
-  // Handle error messages from background
-  if (request.action === 'showError') {
-    renderError(request.message);
   }
 });
 
@@ -85,50 +83,19 @@ const urlObserver = new MutationObserver(() => {
 });
 urlObserver.observe(document.body, { childList: true, subtree: true });
 
-// ── Check if we're on a valid YouTube video page ─────────────────────
-function isYouTubeVideoPage() {
-  return location.href.includes('youtube.com') && 
-         (location.href.includes('v=') || 
-          location.href.includes('/shorts/') ||
-          document.querySelector('.html5-video-player'));
-}
-
 // ── Observer setup ───────────────────────────────────────────────────
 function waitForPlayerAndObserve() {
   if (subtitleObserver) return;
 
-  const captionArea = document.querySelector('.ytp-caption-window-container');
-  logAlways('Looking for captionArea...', captionArea ? 'FOUND' : 'NOT FOUND');
+  const captionArea = document.querySelector(CAPTION_AREA_SELECTOR);
+  logDebug('Looking for captionArea...', captionArea ? 'FOUND' : 'NOT FOUND');
   if (!captionArea) {
     setTimeout(waitForPlayerAndObserve, 1000);
     return;
   }
 
   subtitleObserver = new MutationObserver((mutations) => {
-    if (isInjecting) return;
-    // Check if any mutation affects real YouTube caption segments (not our wrappers)
-    const hasRealChange = mutations.some(m => {
-      // Skip if target is our bilingual wrapper
-      if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
-      // Check added nodes
-      if (m.addedNodes.length > 0) {
-        return [...m.addedNodes].some(n =>
-          n.nodeType === Node.ELEMENT_NODE &&
-          !n.dataset?.bilingual &&
-          !(n.closest && n.closest('[data-bilingual-wrapper]'))
-        );
-      }
-      // Check for text content changes
-      if (m.type === 'characterData') {
-        return !m.target.closest?.('[data-bilingual-wrapper]');
-      }
-      // Check removed nodes
-      if (m.removedNodes.length > 0) {
-        return true; // Always process removals
-      }
-      return false;
-    });
-    if (hasRealChange) {
+    if (mutations.some(isRealCaptionMutation)) {
       logDebug('Mutation detected, calling handleSubtitleUpdate');
       handleSubtitleUpdate();
     }
@@ -141,28 +108,10 @@ function waitForPlayerAndObserve() {
   
   // Also observe the Shadow DOM if it exists
   const shadowRoot = captionArea.shadowRoot;
-  logAlways('Shadow DOM detected:', shadowRoot ? 'YES' : 'NO');
+  logDebug('Shadow DOM detected:', shadowRoot ? 'YES' : 'NO');
   if (shadowRoot && !shadowObserver) {
     shadowObserver = new MutationObserver((mutations) => {
-      if (isInjecting) return;
-      const hasRealChange = mutations.some(m => {
-        if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
-        if (m.addedNodes.length > 0) {
-          return [...m.addedNodes].some(n =>
-            n.nodeType === Node.ELEMENT_NODE &&
-            !n.dataset?.bilingual &&
-            !(n.closest && n.closest('[data-bilingual-wrapper]'))
-          );
-        }
-        if (m.type === 'characterData') {
-          return !m.target.closest?.('[data-bilingual-wrapper]');
-        }
-        if (m.removedNodes.length > 0) {
-          return true;
-        }
-        return false;
-      });
-      if (hasRealChange) {
+      if (mutations.some(isRealCaptionMutation)) {
         logDebug('Shadow DOM mutation detected, calling handleSubtitleUpdate');
         handleSubtitleUpdate();
       }
@@ -187,6 +136,29 @@ function stopObserving() {
     shadowObserver = null;
   }
   logDebug('Subtitle observer stopped');
+}
+
+// ── Mutation filter dùng chung 2 observer ────────────────────────────
+function isRealCaptionMutation(m) {
+  // Skip if target is our bilingual wrapper
+  if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
+  // Check added nodes
+  if (m.addedNodes.length > 0) {
+    return [...m.addedNodes].some(n =>
+      n.nodeType === Node.ELEMENT_NODE &&
+      !n.dataset?.bilingual &&
+      !(n.closest && n.closest('[data-bilingual-wrapper]'))
+    );
+  }
+  // Check for text content changes
+  if (m.type === 'characterData') {
+    return !m.target.closest?.('[data-bilingual-wrapper]');
+  }
+  // Check removed nodes
+  if (m.removedNodes.length > 0) {
+    return true; // Always process removals
+  }
+  return false;
 }
 
 // ── Core subtitle update handler ─────────────────────────────────────
@@ -239,22 +211,16 @@ function handleSubtitleUpdate() {
       }
     }
 
-    pendingTranslation = true;
-
     const gen = ++translationGeneration;
     chrome.runtime.sendMessage(
       { action: 'translate', text: originalText, targetLang },
       (response) => {
         if (chrome.runtime.lastError) {
           logDebug('Runtime error:', chrome.runtime.lastError.message);
-          pendingTranslation = false;
           return;
         }
         if (gen !== translationGeneration) return;
-        
-        lastTranslationTime = Date.now();
-        pendingTranslation = false;
-        
+
         if (response && response.translatedText) {
           if (response.isFallback) {
             logDebug('Using fallback translation');
@@ -275,25 +241,17 @@ function handleSubtitleUpdate() {
 
 // ── Find caption segments in both Light and Shadow DOM ───────────────
 function findCaptionSegments() {
-  const segments = [];
-  
-  // Check Light DOM
-  const lightSegments = document.querySelectorAll('.ytp-caption-segment');
-  lightSegments.forEach(seg => segments.push(seg));
-  
-  // Check Shadow DOM of caption container
-  const captionArea = document.querySelector('.ytp-caption-window-container');
-  if (captionArea) {
-    const shadowRoot = captionArea.shadowRoot;
-    if (shadowRoot) {
-      const shadowSegments = shadowRoot.querySelectorAll('.ytp-caption-segment');
-      shadowSegments.forEach(seg => segments.push(seg));
-      logAlways('Found segments in Shadow DOM:', shadowSegments.length);
-      logAlways('Total segments (Light + Shadow):', segments.length);
-    }
-  }
-  
+  const segments = queryAllInRoots(SEGMENT_SELECTOR);
+  logDebug('Found segments:', segments.length, '(Light + Shadow)');
   return segments;
+}
+
+// ── Factory: tạo translated span dùng chung ──────────────────────────
+function createTranslatedSpan() {
+  const span = document.createElement('span');
+  span.className = 'bilingual-translated';
+  span.dataset.bilingual = 'true';
+  return span;
 }
 
 // ── Wrap original segments in bilingual wrappers ─────────────────────
@@ -317,16 +275,10 @@ function wrapOriginalSegments() {
       wrapper.appendChild(seg);
       logDebug('Created wrapper for segment', index);
     }
-    
+
     // Get or create translated span
-    let transSpan = wrapper.querySelector('.bilingual-translated');
-    if (!transSpan) {
-      transSpan = document.createElement('span');
-      transSpan.className = 'bilingual-translated';
-      transSpan.dataset.bilingual = 'true';
-      transSpan.style.display = 'block';
-      transSpan.style.color = '#FFD54F';
-      wrapper.appendChild(transSpan);
+    if (!wrapper.querySelector('.bilingual-translated')) {
+      wrapper.appendChild(createTranslatedSpan());
       logDebug('Created translated span for segment', index);
     }
   });
@@ -334,38 +286,17 @@ function wrapOriginalSegments() {
 
 // ── Update bilingual segments with translation ───────────────────────
 function updateBilingualSegments(translatedText) {
-  // Get wrappers from both Light and Shadow DOM
-  const wrappers = [];
-  
-  // Check Light DOM
-  const lightWrappers = document.querySelectorAll('[data-bilingual-wrapper]');
-  lightWrappers.forEach(w => wrappers.push(w));
-  
-  // Check Shadow DOM of caption container
-  const captionArea = document.querySelector('.ytp-caption-window-container');
-  if (captionArea) {
-    const shadowRoot = captionArea.shadowRoot;
-    if (shadowRoot) {
-      const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
-      shadowWrappers.forEach(w => wrappers.push(w));
-      logDebug('Found wrappers in Shadow DOM:', shadowWrappers.length);
-    }
-  }
-  
+  const wrappers = queryAllInRoots('[data-bilingual-wrapper]');
   logDebug('updateBilingualSegments called with:', { translatedText, wrapperCount: wrappers.length });
 
   wrappers.forEach((wrapper, index) => {
     let transSpan = wrapper.querySelector('.bilingual-translated');
     if (!transSpan) {
-      transSpan = document.createElement('span');
-      transSpan.className = 'bilingual-translated';
-      transSpan.dataset.bilingual = 'true';
-      transSpan.style.display = 'block';
-      transSpan.style.color = '#FFD54F';
+      transSpan = createTranslatedSpan();
       wrapper.appendChild(transSpan);
       logDebug('Created translated span for segment', index);
     }
-    
+
     // Update translated text
     if (translatedText) {
       transSpan.textContent = translatedText;
@@ -376,25 +307,6 @@ function updateBilingualSegments(translatedText) {
       transSpan.style.display = 'none';
     }
   });
-}
-
-function hideLoadingState() {
-  isLoading = false;
-  clearTimeout(loadingTimeout);
-  const overlay = getOrCreateOverlay();
-  overlay.classList.remove('loading');
-}
-
-// ── Error Display ────────────────────────────────────────────────────
-function renderError(message) {
-  const overlay = getOrCreateOverlay();
-  overlay.textContent = message;
-  overlay.style.color = '#FF5252';
-  overlay.style.display = 'block';
-  overlay.classList.remove('loading');
-  isLoading = false;
-  clearTimeout(loadingTimeout);
-  logDebug('Error displayed:', message);
 }
 
 // ── Overlay (our own div, outside YouTube's caption DOM) ─────────────
@@ -422,7 +334,7 @@ function renderOverlay(translatedText) {
   const overlay = getOrCreateOverlay();
 
   // Copy font/size from a real YouTube caption segment for a native look
-  const templateSeg = document.querySelector('.ytp-caption-segment:not([data-bilingual])');
+  const templateSeg = document.querySelector(`${SEGMENT_SELECTOR}:not([data-bilingual])`);
   if (templateSeg) {
     const cs = window.getComputedStyle(templateSeg);
     overlay.style.fontFamily    = cs.fontFamily;
@@ -430,13 +342,13 @@ function renderOverlay(translatedText) {
     overlay.style.fontWeight    = cs.fontWeight;
     overlay.style.lineHeight    = cs.lineHeight;
     overlay.style.backgroundColor = cs.backgroundColor || 'rgba(8,8,8,0.75)';
-    overlay.style.color         = (subtitleMode === 'translated-only') ? (cs.color || '#fff') : '#FFD54F';
+    overlay.style.color         = (subtitleMode === 'translated-only') ? (cs.color || '#fff') : 'var(--yt-accent)';
   } else {
     overlay.style.fontFamily    = 'YouTube Noto, Roboto, Arial, sans-serif';
     overlay.style.fontSize      = '24px';
     overlay.style.fontWeight    = 'bold';
     overlay.style.backgroundColor = 'rgba(8,8,8,0.75)';
-    overlay.style.color         = subtitleMode === 'translated-only' ? '#fff' : '#FFD54F';
+    overlay.style.color         = subtitleMode === 'translated-only' ? '#fff' : 'var(--yt-accent)';
   }
 
   overlay.textContent   = translatedText;
@@ -452,24 +364,10 @@ function removeOverlay() {
 
 // ── Remove bilingual wrappers ────────────────────────────────────────
 function removeBilingualWrappers() {
-  const wrappers = [];
-  
-  // Check Light DOM
-  const lightWrappers = document.querySelectorAll('[data-bilingual-wrapper]');
-  lightWrappers.forEach(w => wrappers.push(w));
-  
-  // Check Shadow DOM of caption container
-  const captionArea = document.querySelector('.ytp-caption-window-container');
-  if (captionArea) {
-    const shadowRoot = captionArea.shadowRoot;
-    if (shadowRoot) {
-      const shadowWrappers = shadowRoot.querySelectorAll('[data-bilingual-wrapper]');
-      shadowWrappers.forEach(w => wrappers.push(w));
-    }
-  }
-  
+  const wrappers = queryAllInRoots('[data-bilingual-wrapper]');
+
   wrappers.forEach(wrapper => {
-    const seg = wrapper.querySelector('.ytp-caption-segment');
+    const seg = wrapper.querySelector(SEGMENT_SELECTOR);
     if (seg) {
       wrapper.parentNode.insertBefore(seg, wrapper);
     }
@@ -480,16 +378,13 @@ function removeBilingualWrappers() {
 // ── Original caption visibility ───────────────────────────────────────
 function applyOriginalVisibility() {
   const hidden = subtitleMode === 'translated-only';
-  document.querySelectorAll('.captions-text:not([data-bilingual])').forEach(el => {
+  queryAllInRoots('.captions-text:not([data-bilingual])').forEach(el => {
     el.style.visibility = hidden ? 'hidden' : '';
   });
 }
 
 function showOriginalCaptions() {
-  document.querySelectorAll('.captions-text:not([data-bilingual])').forEach(el => {
+  queryAllInRoots('.captions-text:not([data-bilingual])').forEach(el => {
     el.style.visibility = '';
   });
 }
-
-// ── YouTube SPA navigation (already handled above at line 64-79) ─────
-// No need to duplicate urlObserver

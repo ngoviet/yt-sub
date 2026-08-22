@@ -25,14 +25,6 @@ class LRUCache {
     }
     this.cache.set(key, value);
   }
-
-  get size() {
-    return this.cache.size;
-  }
-
-  clear() {
-    this.cache.clear();
-  }
 }
 
 // ================================================
@@ -92,7 +84,7 @@ const rateLimiter = new RateLimiter(
 // ================================================
 // Message Listener
 // ================================================
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
   if (request.action === 'translate') {
     const { text, targetLang } = request;
     const cacheKey = `${text}_${targetLang}`;
