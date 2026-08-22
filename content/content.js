@@ -199,24 +199,35 @@ function stopObserving() {
 }
 
 // ── Mutation filter dùng chung 2 observer ────────────────────────────
+// Phân biệt node CỦA EXTENSION (wrapper/span — có data-bilingual trên
+// CHÍNH node đó) vs node của YouTube (segment / text node sạch).
+// KHÔNG dùng closest('[data-bilingual-wrapper]') cho target: segment
+// nằm TRONG wrapper nên mọi mutation caption của YouTube bên trong
+// wrapper sẽ bị chặn nhầm (bug: caption đổi text không re-translate).
 function isRealCaptionMutation(m) {
-  // Skip if target is our bilingual wrapper
-  if (m.target.closest && m.target.closest('[data-bilingual-wrapper]')) return false;
-  // Check added nodes
-  if (m.addedNodes.length > 0) {
-    return [...m.addedNodes].some(n =>
-      n.nodeType === Node.ELEMENT_NODE &&
-      !n.dataset?.bilingual &&
-      !(n.closest && n.closest('[data-bilingual-wrapper]'))
-    );
-  }
-  // Check for text content changes
+  // YouTube đổi text in-place qua text node; text node của span là của extension
   if (m.type === 'characterData') {
-    return !m.target.closest?.('[data-bilingual-wrapper]');
+    return !(m.target.parentElement?.dataset?.bilingual);
   }
-  // Check removed nodes
-  if (m.removedNodes.length > 0) {
-    return true; // Always process removals
+
+  const nodes = [...m.addedNodes, ...m.removedNodes];
+  if (nodes.length === 0) return false;
+
+  // Wrapper bị gỡ khỏi caption area = YouTube clear caption → xử lý (ẩn overlay)
+  if ([...m.removedNodes].some(n => n.nodeType === Node.ELEMENT_NODE && n.dataset?.bilingualWrapper)) return true;
+
+  const targetIsExt = m.target.nodeType === Node.ELEMENT_NODE && m.target.dataset?.bilingual;
+
+  for (const n of nodes) {
+    if (n.nodeType !== Node.ELEMENT_NODE && n.nodeType !== Node.TEXT_NODE) continue;
+    // Wrapper/span do extension tạo (có data-bilingual trên CHÍNH node) → bỏ qua
+    if (n.nodeType === Node.ELEMENT_NODE && n.dataset?.bilingual) continue;
+    // Element sạch (segment mới của YouTube / seg được move vào wrapper) → thật
+    if (n.nodeType === Node.ELEMENT_NODE) return true;
+    // Text node: sau khi detach không lấy được parentElement → dựa vào target record
+    const owner = n.parentElement || (targetIsExt ? m.target : null);
+    if (owner?.dataset?.bilingual) continue; // text của transSpan → do extension
+    return true; // text mới của YouTube
   }
   return false;
 }
