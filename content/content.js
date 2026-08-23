@@ -131,7 +131,7 @@ function applyMode() {
   waitForPlayerAndObserve();
   // Font size / settings vừa đổi → caption đang hiện không trigger mutation
   // (text không đổi) → overlay giữ font cũ. Xử lý lại ngay để re-render.
-  if (subtitleMode === 'translated-only') handleSubtitleUpdate();
+  if (subtitleMode !== 'original-only') handleSubtitleUpdate();
 }
 
 // ── YouTube SPA navigation ───────────────────────────────────────────
@@ -213,11 +213,8 @@ function stopObserving() {
 }
 
 // ── Mutation filter dùng chung 2 observer ────────────────────────────
-// Phân biệt node CỦA EXTENSION (wrapper/span — có data-bilingual trên
-// CHÍNH node đó) vs node của YouTube (segment / text node sạch).
-// KHÔNG dùng closest('[data-bilingual-wrapper]') cho target: segment
-// nằm TRONG wrapper nên mọi mutation caption của YouTube bên trong
-// wrapper sẽ bị chặn nhầm (bug: caption đổi text không re-translate).
+// Phân biệt node CỦA EXTENSION (có data-bilingual trên CHÍNH node đó —
+// overlay + span cũ từ phiên trước) vs node của YouTube (segment sạch).
 function isRealCaptionMutation(m) {
   // YouTube đổi text in-place qua text node; text node của span là của extension
   if (m.type === 'characterData') {
@@ -257,8 +254,9 @@ function handleSubtitleUpdate() {
     const allSegments = findCaptionSegments();
 
     if (allSegments.length === 0) {
+      // Caption swap tạm thời rỗng → KHÔNG đụng caption DOM (bỏ wrapper
+      // gây blink khi segment mới tới). Overlay ẩn, caption gốc hiện lại.
       removeOverlay();
-      removeBilingualWrappers();
       showOriginalCaptions();
       return;
     }
@@ -284,20 +282,9 @@ function handleSubtitleUpdate() {
       }
     }
 
-    // Bilingual: đảm bảo wrapper tồn tại + render lại bản dịch đã cache
+    // Bilingual: render overlay 2 dòng từ state (kể cả bản dịch đã cache)
     if (subtitleMode === 'bilingual') {
-      wrapOriginalSegments();
-      for (const seg of allSegments) {
-        const st = segmentStates.get(seg);
-        if (st && st.translated) {
-          const transSpan = getWrapperTransSpan(seg);
-          if (transSpan) {
-            transSpan.textContent = st.translated;
-            transSpan.style.display = 'block';
-            applyTranslatedFontScale(transSpan);
-          }
-        }
-      }
+      refreshBilingualOverlay();
     }
 
     // Gửi request cho text mới (dedupe: cùng text + đang inflight → chờ 1 request)
@@ -314,12 +301,7 @@ function handleSubtitleUpdate() {
         if (subtitleMode === 'translated-only') {
           refreshTranslatedOverlay();
         } else {
-          const transSpan = getWrapperTransSpan(seg);
-          if (transSpan) {
-            transSpan.textContent = st.translated;
-            transSpan.style.display = 'block';
-            applyTranslatedFontScale(transSpan);
-          }
+          refreshBilingualOverlay();
         }
       });
     }
@@ -364,26 +346,6 @@ function requestTranslation(text, targetLang) {
   return promise;
 }
 
-// ── Lấy translated span của segment (tạo wrapper nếu cần) ─────────────
-function getWrapperTransSpan(seg) {
-  let wrapper = seg.closest('[data-bilingual-wrapper]');
-  if (!wrapper) {
-    wrapper = document.createElement('span');
-    wrapper.dataset.bilingual = 'true';
-    wrapper.dataset.bilingualWrapper = 'true';
-    wrapper.style.display = 'inline';
-    wrapper.style.whiteSpace = 'pre-wrap';
-    seg.parentNode.insertBefore(wrapper, seg);
-    wrapper.appendChild(seg);
-  }
-  let transSpan = wrapper.querySelector('.bilingual-translated');
-  if (!transSpan) {
-    transSpan = createTranslatedSpan();
-    wrapper.appendChild(transSpan);
-  }
-  return transSpan;
-}
-
 // ── translated-only: gộp bản dịch từng segment vào overlay ────────────
 function refreshTranslatedOverlay() {
   const parts = [];
@@ -396,7 +358,28 @@ function refreshTranslatedOverlay() {
     }
   }
   if (parts.length > 0) {
-    renderOverlay(parts.join(' '), detectedLang);
+    // B7: prefix ngôn ngữ nguồn phát hiện được (vd "[EN] ...")
+    const prefix = (detectedLang && detectedLang !== targetLang)
+      ? `[${detectedLang.toUpperCase()}] `
+      : '';
+    renderOverlay(null, prefix + parts.join(' '));
+  } else {
+    removeOverlay();
+  }
+}
+
+// ── bilingual: gộp segment → overlay 2 dòng (gốc trắng / dịch accent) ──
+function refreshBilingualOverlay() {
+  const origParts = [];
+  const transParts = [];
+  for (const seg of findCaptionSegments()) {
+    const st = segmentStates.get(seg);
+    if (!st) continue;
+    origParts.push(st.text);
+    if (st.translated) transParts.push(st.translated);
+  }
+  if (origParts.length > 0) {
+    renderOverlay(origParts.join(' '), transParts.join(' ') || null);
   } else {
     removeOverlay();
   }
@@ -407,55 +390,6 @@ function findCaptionSegments() {
   const segments = queryAllInRoots(SEGMENT_SELECTOR);
   logDebug('Found segments:', segments.length, '(Light + Shadow)');
   return segments;
-}
-
-// ── Factory: tạo translated span dùng chung ──────────────────────────
-function createTranslatedSpan() {
-  const span = document.createElement('span');
-  span.className = 'bilingual-translated';
-  span.dataset.bilingual = 'true';
-  return span;
-}
-
-// ── Áp font scale user chọn cho bản dịch (bilingual mode) ─────────────
-// renderOverlay (translated-only) tự scale; transSpan trong wrapper thì
-// không — đây là chỗ duy nhất font size slider có hiệu lực ở bilingual.
-function applyTranslatedFontScale(transSpan) {
-  const wrapper = transSpan.parentElement;
-  const seg = wrapper && wrapper.querySelector(SEGMENT_SELECTOR);
-  if (!seg) return;
-  const cs = window.getComputedStyle(seg);
-  transSpan.style.fontSize = `${parseFloat(cs.fontSize) * fontSizeScale}px`;
-}
-
-// ── Wrap original segments in bilingual wrappers ─────────────────────
-function wrapOriginalSegments() {
-  // Get segments from both Light and Shadow DOM
-  const allSegments = findCaptionSegments()
-    .filter(el => !el.closest('[data-bilingual-wrapper]'));
-
-  logDebug('wrapOriginalSegments called with:', allSegments.length, 'segments');
-
-  allSegments.forEach((seg, index) => {
-    // Get or create wrapper
-    let wrapper = seg.closest('[data-bilingual-wrapper]');
-    if (!wrapper) {
-      wrapper = document.createElement('span');
-      wrapper.dataset.bilingual = 'true';
-      wrapper.dataset.bilingualWrapper = 'true';
-      wrapper.style.display = 'inline';
-      wrapper.style.whiteSpace = 'pre-wrap';
-      seg.parentNode.insertBefore(wrapper, seg);
-      wrapper.appendChild(seg);
-      logDebug('Created wrapper for segment', index);
-    }
-
-    // Get or create translated span
-    if (!wrapper.querySelector('.bilingual-translated')) {
-      wrapper.appendChild(createTranslatedSpan());
-      logDebug('Created translated span for segment', index);
-    }
-  });
 }
 
 // ── Overlay (our own div, outside YouTube's caption DOM) ─────────────
@@ -479,7 +413,10 @@ function getOrCreateOverlay() {
   return overlay;
 }
 
-function renderOverlay(translatedText, detectedLang) {
+// ── Render overlay 1-2 dòng (bilingual: gốc + dịch; translated-only: dịch) ──
+// Overlay nằm ngoài caption DOM YouTube (left:50% tự căn giữa) — chèn span
+// vào caption window làm width đổi → YouTube JS reposition → text nhảy + lệch.
+function renderOverlay(originalText, translatedText) {
   const overlay = getOrCreateOverlay();
 
   // Vị trí đáy user tùy chỉnh (CSS dùng var --yt-bottom)
@@ -494,20 +431,31 @@ function renderOverlay(translatedText, detectedLang) {
     overlay.style.fontWeight    = cs.fontWeight;
     overlay.style.lineHeight    = cs.lineHeight;
     overlay.style.backgroundColor = cs.backgroundColor || 'rgba(8,8,8,0.75)';
-    overlay.style.color         = (subtitleMode === 'translated-only') ? (cs.color || '#fff') : 'var(--yt-accent)';
   } else {
     overlay.style.fontFamily    = 'YouTube Noto, Roboto, Arial, sans-serif';
     overlay.style.fontSize      = `${24 * fontSizeScale}px`;
     overlay.style.fontWeight    = 'bold';
     overlay.style.backgroundColor = 'rgba(8,8,8,0.75)';
-    overlay.style.color         = subtitleMode === 'translated-only' ? '#fff' : 'var(--yt-accent)';
   }
 
-  // B7: prefix ngôn ngữ nguồn phát hiện được (vd "[EN] ...")
-  const prefix = (detectedLang && detectedLang !== targetLang)
-    ? `[${detectedLang.toUpperCase()}] `
-    : '';
-  overlay.textContent   = prefix + translatedText;
+  overlay.innerHTML = '';
+  if (originalText) {
+    const origLine = document.createElement('div');
+    origLine.className = 'ybs-line-orig';
+    origLine.textContent = originalText;
+    overlay.appendChild(origLine);
+  }
+  if (translatedText) {
+    const transLine = document.createElement('div');
+    transLine.className = 'ybs-line-trans';
+    transLine.textContent = translatedText;
+    // translated-only: màu theo YouTube caption (trắng) — bilingual: accent (CSS class)
+    if (!originalText && templateSeg) {
+      const cs = window.getComputedStyle(templateSeg);
+      transLine.style.color = cs.color || '#fff';
+    }
+    overlay.appendChild(transLine);
+  }
   overlay.style.display = 'block';
 
   logDebug('Overlay rendered:', overlay.textContent);
@@ -533,7 +481,8 @@ function removeBilingualWrappers() {
 
 // ── Original caption visibility ───────────────────────────────────────
 function applyOriginalVisibility() {
-  const hidden = subtitleMode === 'translated-only';
+  // Cả translated-only lẫn bilingual đều hiển thị qua overlay → ẩn gốc
+  const hidden = subtitleMode !== 'original-only';
   queryAllInRoots('.captions-text:not([data-bilingual])').forEach(el => {
     el.style.visibility = hidden ? 'hidden' : '';
   });

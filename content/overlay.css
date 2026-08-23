@@ -57,21 +57,11 @@
 }
 
 /* ================================================
-   Bilingual Inline Subtitle Styling
-   ================================================
-   .bilingual-translated is the translated text
-   span inserted right after the original sub text
+   Overlay lines (bilingual: original + translated)
    ================================================ */
-
-.bilingual-translated {
-  display: block;
+#yt-bilingual-sub .ybs-line-orig {
+  color: #ffffff;
+}
+#yt-bilingual-sub .ybs-line-trans {
   color: var(--yt-accent);
-  /* Inherit all font styles from parent (YouTube's caption segment) */
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  text-align: inherit;
-  white-space: inherit;
-  word-break: inherit;
 }
