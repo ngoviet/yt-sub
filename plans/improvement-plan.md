@@ -63,3 +63,27 @@ Extension scrape caption qua DOM (MutationObserver Light + Shadow), **không** f
 | storage.sync quota (8KB/item) | Trung | Chỉ settings nhỏ vào sync; cache dịch bắt buộc storage.local |
 | YouTube đổi class caption | Trung | Selector gom constants; Light+Shadow fallback; feature-detect |
 | API key BYOK lưu plaintext | Thấp | storage.local, cảnh báo UI + README, zero server trung gian |
+
+---
+
+## Changelog v1.6.0 (2026-08-23) — Đã ship
+
+### B2. BYOK DeepSeek ✅
+- Provider select trong popup (Google Translate / DeepSeek), API key lưu `storage.local` (KHÔNG sync), chọn model flash/pro
+- `optional_host_permissions` — permission chỉ được xin khi user chọn DeepSeek, deny → revert google
+- Fallback chain: DeepSeek → gtx → `[lang] text`; cache key theo effective provider (gtx fallback không nhiễm namespace deepseek)
+- DeepSeek V4: bắt buộc `thinking:{type:'disabled'}` (mặc định bật → tốn token), `response_format:json_object`
+- Bug nền bắt buộc: `bgInflight` dedupe cấp background (watchdog 12s resend + translate-all queue → 1 network call cho cùng text); `retryable=false` short-circuit 401/402/400/422
+- 401/402 → ghi `deepseekError` → popup báo đỏ
+
+### B3. Transcript panel trong trang ✅
+- Drawer phải (top 56px, 360px), toggle pill + phím tắt `Alt+B`, mở/đóng sync qua storage
+- Nguồn dữ liệu: MAIN-world bridge (`yt-player-data.js`) đọc `ytInitialPlayerResponse` → dispatch CustomEvent; `PerformanceObserver` resource bắt URL timedtext có pot → lọc `aAppend=` (rolling) + `tlang=` (auto-translated) + strip `translate_uri` → fetch JSON3
+- PoToken fail (200+rỗng) → capture mode: `ybs-caption` events từ content.js, dedupe `t|text`
+- Click row → seek; timeupdate highlight + auto-scroll
+- **Translate All**: queue concurrency 1, watchdog 12s (an toàn nhờ bgInflight), progress bar, nhấn lần 2 = cancel, resume không dịch lại đoạn đã dịch
+- Export: Copy TXT / SRT / VTT (Blob + `<a download>` — không cần `downloads` permission)
+
+### Verification
+- Harness A (Node + chrome stub): 37/37 PASS — google regression, DeepSeek 200 JSON (body shape + Bearer + thinking), 401 không retry + gtx fallback + deepseekError, 429 retry 3, timeout retry 3, cache key isolation, bgInflight dedupe, fallback không cache, permission guard, thiếu key guard, JSON parse fail
+- Harness B (Playwright + stub page): ~57 asserts PASS — open/close slide + sync, render 3 rows (filter aAppend/tlang/translate_uri), seek, highlight (timeupdate + seeked), SRT/VTT format, computeEnds, capture dedupe + merge translated + endT, translate-all 100% + cancel + resume, fallback isFallback không gán, yt-player-data extract + SPA nav
