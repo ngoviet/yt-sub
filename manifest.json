@@ -29,6 +29,27 @@
       "css": [
         "content/overlay.css"
       ]
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/watch*"
+      ],
+      "js": [
+        "content/transcript.js"
+      ],
+      "css": [
+        "content/transcript.css"
+      ]
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/watch*"
+      ],
+      "js": [
+        "content/yt-player-data.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
     }
   ],
   "action": {
@@ -51,6 +72,12 @@
         "default": "Alt+Shift+T"
       },
       "description": "Xoay vòng chế độ hiển thị (bilingual / translated / original)"
+    },
+    "toggle-transcript": {
+      "suggested_key": {
+        "default": "Alt+B"
+      },
+      "description": "Bật/tắt bảng transcript trong trang"
     }
   },
   "icons": {

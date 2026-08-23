@@ -1,0 +1,213 @@
+/* ================================================================
+   Transcript Panel — drawer phải (watch pages)
+   Palette tái dùng popup.css, accent = --yt-accent (user chọn)
+   ================================================================ */
+:root {
+  --ybs-bg: #0f0f0f;
+  --ybs-surface: #1e1e1e;
+  --ybs-border: rgba(255, 255, 255, 0.1);
+  --ybs-text: #ffffff;
+  --ybs-muted: #aaaaaa;
+  --ybs-accent: var(--yt-accent, #3ea6ff);
+}
+
+#ybs-transcript-panel {
+  position: fixed;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  max-width: 90vw;
+  background: var(--ybs-bg);
+  color: var(--ybs-text);
+  border-left: 1px solid var(--ybs-border);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  font-family: 'YouTube Noto', Roboto, Arial, sans-serif;
+  font-size: 13px;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.4);
+}
+#ybs-transcript-panel.ybs-open {
+  transform: translateX(0);
+}
+
+/* ── Toggle pill (trái panel, trượt cùng) ──────────────────────── */
+#ybs-transcript-toggle {
+  position: fixed;
+  top: 64px;
+  right: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--ybs-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--ybs-surface);
+  color: var(--ybs-text);
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 2147483000;
+  transition: background 0.2s;
+}
+#ybs-transcript-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+#ybs-transcript-toggle[hidden] {
+  display: none;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+.ybs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ybs-border);
+  flex: 0 0 auto;
+}
+.ybs-title {
+  flex: 1;
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ybs-btn {
+  background: var(--ybs-surface);
+  color: var(--ybs-text);
+  border: 1px solid var(--ybs-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+.ybs-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.ybs-btn.ybs-primary {
+  background: var(--ybs-accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+}
+.ybs-btn.ybs-primary:hover {
+  opacity: 0.9;
+}
+.ybs-btn.ybs-close {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  color: var(--ybs-muted);
+}
+
+/* ── Progress ───────────────────────────────────────────────────── */
+.ybs-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--ybs-border);
+  flex: 0 0 auto;
+}
+.ybs-progress-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ybs-accent);
+  width: 0%;
+  transition: width 0.2s ease;
+}
+.ybs-progress-text {
+  font-size: 11px;
+  color: var(--ybs-muted);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Actions ────────────────────────────────────────────────────── */
+.ybs-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ybs-border);
+  flex: 0 0 auto;
+}
+.ybs-actions .ybs-btn {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 11px;
+}
+
+/* ── Empty state ────────────────────────────────────────────────── */
+.ybs-empty {
+  padding: 16px 12px;
+  color: var(--ybs-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--ybs-border);
+  flex: 0 0 auto;
+}
+
+/* ── List ───────────────────────────────────────────────────────── */
+.ybs-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 8px 0;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+.ybs-list::-webkit-scrollbar {
+  width: 6px;
+}
+.ybs-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+.ybs-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.ybs-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.ybs-row.active {
+  background: rgba(62, 166, 255, 0.12);
+  border-left-color: var(--ybs-accent);
+}
+.ybs-time {
+  flex: 0 0 44px;
+  color: var(--ybs-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+.ybs-row.active .ybs-time {
+  color: var(--ybs-accent);
+}
+.ybs-body {
+  flex: 1;
+  min-width: 0;
+}
+.ybs-orig {
+  color: var(--ybs-text);
+  line-height: 1.45;
+  word-break: break-word;
+}
+.ybs-trans {
+  color: var(--ybs-accent);
+  line-height: 1.45;
+  word-break: break-word;
+  margin-top: 2px;
+}

@@ -40,6 +40,17 @@ function queryAllInRoots(selector) {
   return results;
 }
 
+// ── Thời điểm caption xuất hiện (cho transcript panel link seek) ──────
+function currentVideoTime() {
+  const video = document.querySelector('video');
+  return video ? video.currentTime : 0;
+}
+
+// ── Dispatch cho transcript panel (watch pages; không listener = no-op) ─
+function dispatchCaptionEvent(text, translated, lang, t) {
+  document.dispatchEvent(new CustomEvent('ybs-caption', { detail: { text, translated, lang, t } }));
+}
+
 // ── Initialize from storage ──────────────────────────────────────────
 chrome.storage.sync.get(['targetLang', 'isEnabled', 'subtitleMode', 'debugMode', 'fontSizeScale', 'overlayBottom', 'accentColor'], (data) => {
   if (data.targetLang)   targetLang   = data.targetLang;
@@ -263,8 +274,10 @@ function handleSubtitleUpdate() {
       if (!text) continue;
       const st = segmentStates.get(seg);
       if (!st || st.text !== text) {
-        segmentStates.set(seg, { text, translated: null });
+        const t = currentVideoTime();
+        segmentStates.set(seg, { text, translated: null, t });
         needTranslate.push({ seg, text });
+        dispatchCaptionEvent(text, null, null, t);
       }
     }
 
@@ -292,6 +305,7 @@ function handleSubtitleUpdate() {
         if (!st || st.text !== text || !seg.isConnected) return; // stale
         st.translated = (res && res.translatedText) ? res.translatedText : text;
         st.lang = (res && res.detectedLang) ? res.detectedLang : null;
+        dispatchCaptionEvent(st.text, st.translated, st.lang, st.t);
 
         if (subtitleMode === 'translated-only') {
           refreshTranslatedOverlay();
