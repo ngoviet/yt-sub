@@ -129,6 +129,9 @@ function applyMode() {
   }
   showOriginalCaptions();
   waitForPlayerAndObserve();
+  // Font size / settings vừa đổi → caption đang hiện không trigger mutation
+  // (text không đổi) → overlay giữ font cũ. Xử lý lại ngay để re-render.
+  if (subtitleMode === 'translated-only') handleSubtitleUpdate();
 }
 
 // ── YouTube SPA navigation ───────────────────────────────────────────
@@ -291,6 +294,7 @@ function handleSubtitleUpdate() {
           if (transSpan) {
             transSpan.textContent = st.translated;
             transSpan.style.display = 'block';
+            applyTranslatedFontScale(transSpan);
           }
         }
       }
@@ -314,6 +318,7 @@ function handleSubtitleUpdate() {
           if (transSpan) {
             transSpan.textContent = st.translated;
             transSpan.style.display = 'block';
+            applyTranslatedFontScale(transSpan);
           }
         }
       });
@@ -410,6 +415,17 @@ function createTranslatedSpan() {
   span.className = 'bilingual-translated';
   span.dataset.bilingual = 'true';
   return span;
+}
+
+// ── Áp font scale user chọn cho bản dịch (bilingual mode) ─────────────
+// renderOverlay (translated-only) tự scale; transSpan trong wrapper thì
+// không — đây là chỗ duy nhất font size slider có hiệu lực ở bilingual.
+function applyTranslatedFontScale(transSpan) {
+  const wrapper = transSpan.parentElement;
+  const seg = wrapper && wrapper.querySelector(SEGMENT_SELECTOR);
+  if (!seg) return;
+  const cs = window.getComputedStyle(seg);
+  transSpan.style.fontSize = `${parseFloat(cs.fontSize) * fontSizeScale}px`;
 }
 
 // ── Wrap original segments in bilingual wrappers ─────────────────────
