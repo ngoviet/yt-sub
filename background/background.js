@@ -119,8 +119,59 @@ async function getPersistent(cacheKey) {
 }
 
 // ================================================
+// Provider settings (BYOK DeepSeek)
+// ================================================
+const DEEPSEEK_ORIGIN = 'https://api.deepseek.com/*';
+const DEEPSEEK_TIMEOUT = 15000; // DeepSeek chậm hơn gtx — 15s, vẫn < SW idle 30s
+
+// Mirror các option targetLang trong popup
+const LANG_NAMES = {
+  vi: 'Vietnamese', en: 'English', ja: 'Japanese', ko: 'Korean',
+  'zh-CN': 'Simplified Chinese', 'zh-TW': 'Traditional Chinese',
+  fr: 'French', de: 'German', es: 'Spanish', th: 'Thai', ru: 'Russian',
+  pt: 'Portuguese', ar: 'Arabic', hi: 'Hindi', id: 'Indonesian'
+};
+
+function deepSeekSystemPrompt(targetLangName) {
+  return `You are a professional subtitle translator. Translate the user's text into ${targetLangName}. ` +
+    `Preserve tone, line breaks, and stage directions like [applause]. ` +
+    `Reply with ONLY a JSON object of shape {"translation":"...","sourceLang":"<ISO-639-1 source code>"}. No explanations.`;
+}
+
+// Cache key theo provider — gtx và DeepSeek không dùng chung namespace
+function makeCacheKey(provider, text, targetLang) {
+  return `${provider}_${text}_${targetLang}`;
+}
+
+// Đọc cấu hình provider + kiểm tra quyền DeepSeek.
+// Popup có thể bị đóng giữa lúc xin quyền → background phải tự guard:
+// provider=deepseek nhưng chưa grant → effectiveProvider=google, gtx chạy ngay.
+async function getProviderSettings() {
+  const sync = await chrome.storage.sync.get(['provider', 'deepseekModel']);
+  const local = await chrome.storage.local.get(['deepseekApiKey']);
+  const wantsDeepseek = sync.provider === 'deepseek';
+  let granted = false;
+  if (wantsDeepseek && typeof chrome.permissions !== 'undefined') {
+    try {
+      granted = await chrome.permissions.contains({ origins: [DEEPSEEK_ORIGIN] });
+    } catch (error) { /* best-effort */ }
+  }
+  return {
+    provider: wantsDeepseek ? 'deepseek' : 'google',
+    effectiveProvider: (wantsDeepseek && granted) ? 'deepseek' : 'google',
+    deepseekApiKey: local.deepseekApiKey || '',
+    deepseekModel: sync.deepseekModel || 'deepseek-v4-flash'
+  };
+}
+
+// ================================================
 // Message Listener
 // ================================================
+// Dedupe cấp background: content watchdog 12s resend + Translate All
+// queue gửi nhiều message cùng text → chỉ 1 network call, mọi responder
+// chờ chung kết quả. DeepSeek timeout 15s > watchdog → thiếu dedupe = double cost.
+const bgInflight = new Map(); // cacheKey → [sendResponse, ...]
+
 chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
   if (request.action === 'translate') {
     const { text, targetLang } = request;
@@ -128,17 +179,40 @@ chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
       sendResponse({ translatedText: '' });
       return true;
     }
-    handleTranslate(text, targetLang, `${text}_${targetLang}`, sendResponse);
+    handleTranslate(text, targetLang, sendResponse);
     return true; // Keep the message channel open for async response
   }
 });
 
-async function handleTranslate(text, targetLang, cacheKey, sendResponse) {
+async function handleTranslate(text, targetLang, sendResponse) {
+  const settings = await getProviderSettings();
+  const cacheKey = makeCacheKey(settings.effectiveProvider, text, targetLang);
+
+  // Cùng text + targetLang + provider → gộp về 1 request
+  if (bgInflight.has(cacheKey)) {
+    bgInflight.get(cacheKey).push(sendResponse);
+    return;
+  }
+  bgInflight.set(cacheKey, [sendResponse]);
+
+  try {
+    const result = await doTranslate(text, targetLang, settings, cacheKey);
+    const responders = bgInflight.get(cacheKey) || [sendResponse];
+    for (const cb of responders) cb(result);
+  } catch (error) {
+    // doTranslate luôn resolve fallback — không tới đây trong thực tế
+    const responders = bgInflight.get(cacheKey) || [sendResponse];
+    for (const cb of responders) cb({ translatedText: `[${targetLang}] ${text}`, isFallback: true });
+  } finally {
+    bgInflight.delete(cacheKey);
+  }
+}
+
+async function doTranslate(text, targetLang, settings, cacheKey) {
   // 1. RAM cache
   const cached = translationCache.get(cacheKey);
   if (cached !== null) {
-    sendResponse({ translatedText: cached });
-    return;
+    return { translatedText: cached };
   }
 
   // 2. Persistent cache (storage.local) — set ngược RAM
@@ -146,8 +220,7 @@ async function handleTranslate(text, targetLang, cacheKey, sendResponse) {
     const persisted = await getPersistent(cacheKey);
     if (persisted) {
       translationCache.set(cacheKey, persisted);
-      sendResponse({ translatedText: persisted });
-      return;
+      return { translatedText: persisted };
     }
   } catch (error) {
     // storage lỗi → cứ translate tiếp
@@ -156,14 +229,12 @@ async function handleTranslate(text, targetLang, cacheKey, sendResponse) {
   // 3. Rate limit
   if (!rateLimiter.isAllowed()) {
     const waitTime = rateLimiter.getWaitTime();
-    setTimeout(() => {
-      translateWithFallback(text, targetLang, cacheKey, sendResponse);
-    }, waitTime);
-    return;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
   }
 
-  // 4. Translate with retry and fallback
-  translateWithFallback(text, targetLang, cacheKey, sendResponse);
+  // 4. Translate theo provider + fallback chain (cache bên trong theo
+  // provider thực tế đã dịch)
+  return translateWithFallback(text, targetLang, settings);
 }
 
 // ================================================
@@ -183,41 +254,52 @@ chrome.commands.onCommand.addListener(async (command) => {
     const next = MODE_CYCLE[(MODE_CYCLE.indexOf(cur) + 1) % MODE_CYCLE.length];
     await chrome.storage.sync.set({ subtitleMode: next });
     console.log(`Display mode: ${next} (Alt+Shift+T)`);
+  } else if (command === 'toggle-transcript') {
+    const { transcriptOpen } = await chrome.storage.sync.get('transcriptOpen');
+    const next = !(transcriptOpen || false);
+    await chrome.storage.sync.set({ transcriptOpen: next });
+    console.log(`Transcript panel ${next ? 'opened' : 'closed'} (Alt+B)`);
   }
 });
 
 // ================================================
 // Translate with Retry & Fallback
 // ================================================
-async function translateWithFallback(text, targetLang, cacheKey, sendResponse) {
+async function translateWithFallback(text, targetLang, settings) {
   try {
-    const result = await translateWithRetry(text, targetLang);
+    let result, usedProvider;
 
-    // Cache result (RAM + persistent)
-    if (cacheKey) {
-      translationCache.set(cacheKey, result.translatedText);
-      storePersistent(cacheKey, result.translatedText);
+    if (settings.effectiveProvider === 'deepseek') {
+      const chain = await translateWithDeepSeekChain(text, targetLang, settings);
+      result = chain.result;
+      usedProvider = chain.usedProvider;
+    } else {
+      result = await translateWithRetry(text, targetLang);
+      usedProvider = 'google';
     }
 
-    sendResponse({ translatedText: result.translatedText, detectedLang: result.detectedLang });
+    // Cache theo provider THỰC TẾ đã dịch — gtx fallback không nhiễm
+    // namespace deepseek và ngược lại (deepseek lỗi → gtx cache riêng)
+    const effectiveKey = makeCacheKey(usedProvider, text, targetLang);
+    translationCache.set(effectiveKey, result.translatedText);
+    storePersistent(effectiveKey, result.translatedText);
+
+    return { translatedText: result.translatedText, detectedLang: result.detectedLang };
   } catch (error) {
     console.error('Translation failed:', error);
 
     // Graceful degradation: return original text with indicator
     // KHÔNG cache fallback — lỗi tạm thời (mạng/429) không nên dính cache vĩnh viễn
-    const fallbackText = `[${targetLang}] ${text}`;
-
-    sendResponse({
-      translatedText: fallbackText,
-      isFallback: true
-    });
+    return { translatedText: `[${targetLang}] ${text}`, isFallback: true };
   }
 }
 
-async function translateWithRetry(text, targetLang, retryCount = 0) {
+async function translateWithRetry(text, targetLang, translateFn = translateText, retryCount = 0) {
   try {
-    return await translateText(text, targetLang);
+    return await translateFn(text, targetLang);
   } catch (error) {
+    // Lỗi cấu hình/auth (401/402/400/422) — retry 3 lần chỉ spam API
+    if (error && error.retryable === false) throw error;
     if (retryCount < RETRY_CONFIG.maxRetries) {
       const delay = Math.min(
         RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.exponentialBase, retryCount),
@@ -225,9 +307,34 @@ async function translateWithRetry(text, targetLang, retryCount = 0) {
       );
       console.warn(`Retry ${retryCount + 1}/${RETRY_CONFIG.maxRetries} after ${delay}ms`);
       await new Promise(resolve => setTimeout(resolve, delay));
-      return translateWithRetry(text, targetLang, retryCount + 1);
+      return translateWithRetry(text, targetLang, translateFn, retryCount + 1);
     }
     throw new Error(`Translation failed after ${RETRY_CONFIG.maxRetries} retries: ${error.message}`);
+  }
+}
+
+// DeepSeek (retry nếu lỗi tạm thời) → Google Translate → fallback
+async function translateWithDeepSeekChain(text, targetLang, settings) {
+  try {
+    const result = await translateWithRetry(
+      text, targetLang,
+      (t, l) => translateWithDeepSeek(t, l, settings)
+    );
+    // Dịch thành công → xóa lỗi auth đang hiển thị ở popup
+    chrome.storage.local.remove('deepseekError').catch(() => {});
+    return { result, usedProvider: 'deepseek' };
+  } catch (error) {
+    const msg = error.message || String(error);
+    if (error && error.retryable === false) {
+      console.warn(`DeepSeek: ${msg} — chuyển sang Google Translate`);
+      if (error.authError) {
+        chrome.storage.local.set({ deepseekError: msg }).catch(() => {});
+      }
+    } else {
+      console.warn(`DeepSeek lỗi tạm thời — chuyển sang Google Translate: ${msg}`);
+    }
+    const result = await translateWithRetry(text, targetLang);
+    return { result, usedProvider: 'google' };
   }
 }
 
@@ -257,6 +364,84 @@ async function translateText(text, targetLang) {
   } catch (error) {
     if (error.name === 'AbortError') {
       throw new Error('Translation request timed out');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ================================================
+// DeepSeek API (BYOK) — OpenAI-compatible chat completions
+// ================================================
+async function translateWithDeepSeek(text, targetLang, settings) {
+  if (!settings.deepseekApiKey) {
+    const err = new Error('DeepSeek API key chưa được cấu hình trong popup');
+    err.retryable = false;
+    throw err;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT);
+
+  try {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${settings.deepseekApiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.deepseekModel,
+        messages: [
+          { role: 'system', content: deepSeekSystemPrompt(LANG_NAMES[targetLang] || targetLang) },
+          { role: 'user', content: text }
+        ],
+        temperature: 0.3,
+        max_tokens: 1024,
+        stream: false,
+        // Thinking mode BẬT MẶC ĐỊNH trên V4 — phải tắt, không thì cháy
+        // latency + reasoning tokens cho phụ đề ngắn
+        thinking: { type: 'disabled' },
+        response_format: { type: 'json_object' }
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const err = new Error(`DeepSeek HTTP ${response.status}: ${response.statusText}`);
+      // 400/401/402/422 = lỗi cấu hình/auth cố định — không retry 3×15s
+      err.retryable = !(response.status === 400 || response.status === 401 ||
+                        response.status === 402 || response.status === 422);
+      err.authError = response.status === 401 || response.status === 402;
+      throw err;
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) {
+      const err = new Error('DeepSeek trả về response rỗng');
+      err.retryable = false;
+      throw err;
+    }
+
+    // Prompt yêu cầu JSON {"translation","sourceLang"} — parse fail thì
+    // dùng raw text, prefix ngôn ngữ nguồn (B7) chỉ mất chứ không hỏng
+    try {
+      const parsed = JSON.parse(content);
+      return {
+        translatedText: parsed.translation || content.trim(),
+        detectedLang: parsed.sourceLang || null
+      };
+    } catch (parseError) {
+      return { translatedText: content.trim(), detectedLang: null };
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      const err = new Error('DeepSeek request timed out');
+      err.retryable = true;
+      throw err;
     }
     throw error;
   } finally {

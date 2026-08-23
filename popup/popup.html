@@ -62,6 +62,22 @@
         </select>
       </div>
 
+      <!-- Translation provider (BYOK DeepSeek) -->
+      <div class="setting-block">
+        <label class="block-label">Translation Provider</label>
+        <select id="provider">
+          <option value="google">Google Translate</option>
+          <option value="deepseek">DeepSeek (BYOK)</option>
+        </select>
+        <div id="deepseekSettings" hidden>
+          <input type="password" id="deepseekApiKey" placeholder="sk-... API key (stored locally)" autocomplete="off">
+          <select id="deepseekModel">
+            <option value="deepseek-v4-flash">deepseek-v4-flash (fast)</option>
+            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Debug mode toggle -->
       <div class="setting-item">
         <label for="debugMode">Debug Mode</label>

@@ -1,10 +1,13 @@
 {
   "manifest_version": 3,
   "name": "YouTube Bilingual Subtitles",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Dịch phụ đề YouTube sang song ngữ realtime.",
   "permissions": [
     "storage"
+  ],
+  "optional_host_permissions": [
+    "https://api.deepseek.com/*"
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
