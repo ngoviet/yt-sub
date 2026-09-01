@@ -115,7 +115,6 @@ function resetTranslationState() {
   inflight.clear();
   translationGeneration++;
   removeOverlay();
-  removeBilingualWrappers();
   showOriginalCaptions();
 }
 
@@ -224,16 +223,13 @@ function isRealCaptionMutation(m) {
   const nodes = [...m.addedNodes, ...m.removedNodes];
   if (nodes.length === 0) return false;
 
-  // Wrapper bị gỡ khỏi caption area = YouTube clear caption → xử lý (ẩn overlay)
-  if ([...m.removedNodes].some(n => n.nodeType === Node.ELEMENT_NODE && n.dataset?.bilingualWrapper)) return true;
-
   const targetIsExt = m.target.nodeType === Node.ELEMENT_NODE && m.target.dataset?.bilingual;
 
   for (const n of nodes) {
     if (n.nodeType !== Node.ELEMENT_NODE && n.nodeType !== Node.TEXT_NODE) continue;
-    // Wrapper/span do extension tạo (có data-bilingual trên CHÍNH node) → bỏ qua
+    // Overlay do extension tạo (có data-bilingual trên CHÍNH node) → bỏ qua
     if (n.nodeType === Node.ELEMENT_NODE && n.dataset?.bilingual) continue;
-    // Element sạch (segment mới của YouTube / seg được move vào wrapper) → thật
+    // Element sạch (segment mới của YouTube) → thật
     if (n.nodeType === Node.ELEMENT_NODE) return true;
     // Text node: sau khi detach không lấy được parentElement → dựa vào target record
     const owner = n.parentElement || (targetIsExt ? m.target : null);
@@ -464,19 +460,6 @@ function renderOverlay(originalText, translatedText) {
 function removeOverlay() {
   const overlay = document.getElementById('yt-bilingual-sub');
   if (overlay) overlay.remove();
-}
-
-// ── Remove bilingual wrappers ────────────────────────────────────────
-function removeBilingualWrappers() {
-  const wrappers = queryAllInRoots('[data-bilingual-wrapper]');
-
-  wrappers.forEach(wrapper => {
-    const seg = wrapper.querySelector(SEGMENT_SELECTOR);
-    if (seg) {
-      wrapper.parentNode.insertBefore(seg, wrapper);
-    }
-    wrapper.remove();
-  });
 }
 
 // ── Original caption visibility ───────────────────────────────────────

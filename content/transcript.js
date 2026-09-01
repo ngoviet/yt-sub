@@ -282,18 +282,8 @@
   }
 
   function onTimeUpdate() {
-    const video = document.querySelector('video');
-    if (!video || !state.open) return;
-    const cur = video.currentTime;
-    let active = -1;
-    for (const seg of state.segments) if (seg.t <= cur) active = seg.t;
-    if (active === state.activeT) return;
-    state.activeT = active;
-    for (const [seg, li] of state.rowMap) li.classList.toggle('active', seg.t === active);
-    if (active >= 0) {
-      const li = state.rowMap.get(state.segments.find(s => s.t === active));
-      if (li) li.scrollIntoView({ block: 'nearest' });
-    }
+    if (!state.open) return;
+    highlightCurrent();
   }
 
   // ── Translate All (queue concurrency 1, cancelable) ────────────
@@ -413,20 +403,23 @@
   }
 
   function fmtSrtTime(sec) {
-    const s = Math.max(0, sec);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const ss = Math.floor(s % 60);
-    const ms = Math.round((s - Math.floor(s)) * 1000);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    // Tính từ total-ms rồi tách ngược — tránh Math.round phần lẻ → 1000 (carry sai timestamp)
+    const totalMs = Math.max(0, Math.round(sec * 1000));
+    const h = Math.floor(totalMs / 3600000);
+    const m = Math.floor((totalMs % 3600000) / 60000);
+    const s = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
   }
 
   function fmtVttTime(sec) {
-    const s = Math.max(0, sec);
-    const m = Math.floor(s / 60);
-    const ss = Math.floor(s % 60);
-    const ms = Math.round((s - Math.floor(s)) * 1000);
-    return `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+    // total-ms tách ngược — đồng nhất với fmtSrtTime, tránh round lẻ → 1000
+    const totalMs = Math.max(0, Math.round(sec * 1000));
+    const h = Math.floor(totalMs / 3600000);
+    const m = Math.floor((totalMs % 3600000) / 60000);
+    const s = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
   }
 
   function buildSrt(segments) {
@@ -472,6 +465,11 @@
     document.addEventListener(CAPTION_EVENT, onCaption);
     window.addEventListener(PLAYER_EVENT, onPlayerData);
     document.addEventListener('yt-navigate-finish', onNav);
+
+    // yt-player-data.js (MAIN world) có thể đã dispatch trước khi listener này
+    // đăng ký (transcript chạy document_idle, player-data chạy document_start).
+    // Request lại → MAIN world re-dispatch payload đã cache (chống race mất title/tracks).
+    window.dispatchEvent(new CustomEvent('ybs-player-data-request'));
 
     const video = document.querySelector('video');
     if (video) {

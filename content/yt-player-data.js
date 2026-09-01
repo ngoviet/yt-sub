@@ -7,7 +7,15 @@
 // ================================================================
 (() => {
   const EVENT = 'ybs-player-data';
+  const REQUEST_EVENT = 'ybs-player-data-request';
   let sent = false;
+  let lastPayload = null;
+
+  function dispatch(payload) {
+    lastPayload = payload;
+    window.dispatchEvent(new CustomEvent(EVENT, { detail: payload }));
+    sent = true;
+  }
 
   function extract() {
     let data = null;
@@ -32,10 +40,15 @@
       : [];
     const title = data.videoDetails && data.videoDetails.title ? data.videoDetails.title : '';
     if (tracks.length > 0 || title) {
-      window.dispatchEvent(new CustomEvent(EVENT, { detail: { title, tracks } }));
-      sent = true;
+      dispatch({ title, tracks });
     }
   }
+
+  // transcript panel (isolated world) chạy muộn hơn — nếu đã miss event ban đầu
+  // thì request lại, ta re-dispatch payload đã cache.
+  window.addEventListener(REQUEST_EVENT, () => {
+    if (lastPayload) window.dispatchEvent(new CustomEvent(EVENT, { detail: lastPayload }));
+  });
 
   extract();
 
@@ -54,6 +67,7 @@
   // SPA navigation — reset trạng thái, chờ dữ liệu mới
   document.addEventListener('yt-navigate-finish', () => {
     sent = false;
+    lastPayload = null; // tránh re-dispatch title/tracks của video cũ
     remaining = 10;
     setTimeout(extract, 0);
     poll();

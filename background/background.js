@@ -185,7 +185,14 @@ chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
 });
 
 async function handleTranslate(text, targetLang, sendResponse) {
-  const settings = await getProviderSettings();
+  let settings;
+  try {
+    settings = await getProviderSettings();
+  } catch (error) {
+    // storage lỗi hiếm gặp → trả fallback, không để rejection treo kênh message
+    sendResponse({ translatedText: `[${targetLang}] ${text}`, isFallback: true });
+    return;
+  }
   const cacheKey = makeCacheKey(settings.effectiveProvider, text, targetLang);
 
   // Cùng text + targetLang + provider → gộp về 1 request
@@ -356,7 +363,10 @@ async function translateText(text, targetLang) {
 
     const data = await response.json();
     // Google Translate API returns an array of arrays. The translated text is in the first element.
-    // data[2] = detected source language (sl=auto)
+    // data[2] = detected source language (sl=auto). Guard shape lạ (Google trả lỗi) → không TypeError.
+    if (!Array.isArray(data) || !Array.isArray(data[0])) {
+      throw new Error('Unexpected Google Translate response shape');
+    }
     return {
       translatedText: data[0].map(item => item[0]).join(''),
       detectedLang: typeof data[2] === 'string' ? data[2] : null
