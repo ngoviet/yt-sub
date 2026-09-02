@@ -113,19 +113,6 @@ select {
 }
 select:focus { border-color: var(--accent-color); }
 
-/* ── Provider input (API key) ── */
-#deepseekApiKey {
-  width: 100%;
-  background-color: var(--secondary-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  outline: none;
-}
-#deepseekApiKey:focus { border-color: var(--accent-color); }
-
 /* ── Footer ── */
 footer { text-align: center; }
 footer p {

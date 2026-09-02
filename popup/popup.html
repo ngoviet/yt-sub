@@ -1,119 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
   <meta charset="UTF-8">
   <link rel="stylesheet" href="popup.css">
+  <title>YouTube Bilingual Subtitles</title>
 </head>
 <body>
   <div class="popup-container">
+
+    <!-- ── Header ─────────────────────────────────────────────── -->
     <header>
-      <h1>SubBilingual</h1>
-      <p class="subtitle">YouTube Dual Captions</p>
+      <h1>YouTube Bilingual Subtitles</h1>
+      <div class="subtitle">Dịch phụ đề song ngữ realtime</div>
     </header>
 
-    <main>
-      <!-- Master toggle -->
-      <div class="setting-item">
-        <label for="isEnabled">Enable Extension</label>
-        <label class="switch">
-          <input type="checkbox" id="isEnabled">
-          <span class="slider round"></span>
-        </label>
+    <!-- ── Master toggle ─────────────────────────────────────── -->
+    <div class="setting-item">
+      <label for="isEnabled">Enable Extension</label>
+      <label class="switch">
+        <input type="checkbox" id="isEnabled" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- ── Display mode ──────────────────────────────────────── -->
+    <div class="setting-block">
+      <div class="block-label">Display Mode</div>
+      <div class="segmented-control">
+        <button type="button" class="seg-btn active" data-value="bilingual">
+          <span class="seg-icon">🔤</span>
+          <span>Bilingual</span>
+        </button>
+        <button type="button" class="seg-btn" data-value="translated-only">
+          <span class="seg-icon">🌐</span>
+          <span>Translated</span>
+        </button>
+        <button type="button" class="seg-btn" data-value="original-only">
+          <span class="seg-icon">📝</span>
+          <span>Original</span>
+        </button>
       </div>
+    </div>
 
-      <!-- Display mode: 3-way segmented control -->
-      <div class="setting-block">
-        <label class="block-label">Display Mode</label>
-        <div class="segmented-control" id="subtitleMode">
-          <button class="seg-btn" data-value="bilingual" title="Show both original and translated">
-            <span class="seg-icon">🔤</span>
-            <span>Bilingual</span>
-          </button>
-          <button class="seg-btn" data-value="translated-only" title="Show translated only, hide original">
-            <span class="seg-icon">🌐</span>
-            <span>Translated</span>
-          </button>
-          <button class="seg-btn" data-value="original-only" title="Show original only (no translation)">
-            <span class="seg-icon">📝</span>
-            <span>Original</span>
-          </button>
-        </div>
+    <!-- ── Target language ───────────────────────────────────── -->
+    <div class="setting-item">
+      <label for="targetLang">Target Language</label>
+      <select id="targetLang">
+        <option value="vi">Vietnamese</option>
+        <option value="en">English</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="zh-CN">Simplified Chinese</option>
+        <option value="zh-TW">Traditional Chinese</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="es">Spanish</option>
+        <option value="th">Thai</option>
+        <option value="ru">Russian</option>
+        <option value="pt">Portuguese</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+        <option value="id">Indonesian</option>
+      </select>
+    </div>
+
+    <!-- ── Overlay style ─────────────────────────────────────── -->
+    <div class="setting-block">
+      <div class="block-label">Overlay Style</div>
+      <div class="range-row">
+        <label for="fontSizeScale">Font size</label>
+        <input type="range" id="fontSizeScale" min="0.5" max="2" step="0.1" value="1">
+        <span id="fontSizeScaleVal">100%</span>
       </div>
-
-      <!-- Target language -->
-      <div class="setting-item">
-        <label for="targetLang">Target Language</label>
-        <select id="targetLang">
-          <option value="vi">🇻🇳 Vietnamese</option>
-          <option value="en">🇬🇧 English</option>
-          <option value="ja">🇯🇵 Japanese</option>
-          <option value="ko">🇰🇷 Korean</option>
-          <option value="zh-CN">🇨🇳 Chinese (S)</option>
-          <option value="zh-TW">🇹🇼 Chinese (T)</option>
-          <option value="fr">🇫🇷 French</option>
-          <option value="de">🇩🇪 German</option>
-          <option value="es">🇪🇸 Spanish</option>
-          <option value="th">🇹🇭 Thai</option>
-          <option value="ru">🇷🇺 Russian</option>
-          <option value="pt">🇵🇹 Portuguese</option>
-          <option value="ar">🇸🇦 Arabic</option>
-          <option value="hi">🇮🇳 Hindi</option>
-          <option value="id">🇮🇩 Indonesian</option>
-        </select>
+      <div class="range-row">
+        <label for="overlayBottom">Bottom</label>
+        <input type="range" id="overlayBottom" min="0" max="200" step="5" value="55">
+        <span id="overlayBottomVal">55px</span>
       </div>
-
-      <!-- Translation provider (BYOK DeepSeek) -->
-      <div class="setting-block">
-        <label class="block-label">Translation Provider</label>
-        <select id="provider">
-          <option value="google">Google Translate</option>
-          <option value="deepseek">DeepSeek (BYOK)</option>
-        </select>
-        <div id="deepseekSettings" hidden>
-          <input type="password" id="deepseekApiKey" placeholder="sk-... API key (stored locally)" autocomplete="off">
-          <select id="deepseekModel">
-            <option value="deepseek-v4-flash">deepseek-v4-flash (fast)</option>
-            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-          </select>
-        </div>
+      <div class="range-row">
+        <label for="accentColor">Accent</label>
+        <input type="color" id="accentColor" value="#FFD54F">
       </div>
+    </div>
 
-      <!-- Debug mode toggle -->
-      <div class="setting-item">
-        <label for="debugMode">Debug Mode</label>
-        <label class="switch">
-          <input type="checkbox" id="debugMode">
-          <span class="slider round"></span>
-        </label>
-      </div>
+    <!-- ── Debug mode ────────────────────────────────────────── -->
+    <div class="setting-item">
+      <label for="debugMode">Debug Mode</label>
+      <label class="switch">
+        <input type="checkbox" id="debugMode">
+        <span class="slider"></span>
+      </label>
+    </div>
 
-      <!-- Overlay customization -->
-      <div class="setting-block">
-        <label class="block-label">Overlay Style</label>
-
-        <div class="range-row">
-          <label for="fontSizeScale">Font Size</label>
-          <input type="range" id="fontSizeScale" min="0.8" max="1.5" step="0.1" value="1">
-          <span id="fontSizeScaleVal">100%</span>
-        </div>
-
-        <div class="range-row">
-          <label for="overlayBottom">Position</label>
-          <input type="range" id="overlayBottom" min="10" max="120" step="5" value="55">
-          <span id="overlayBottomVal">55px</span>
-        </div>
-
-        <div class="range-row">
-          <label for="accentColor">Accent Color</label>
-          <input type="color" id="accentColor" value="#FFD54F">
-        </div>
-      </div>
-    </main>
-
+    <!-- ── Footer / status ───────────────────────────────────── -->
     <footer>
       <p id="status">Status: Active</p>
     </footer>
+
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>

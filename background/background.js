@@ -118,50 +118,9 @@ async function getPersistent(cacheKey) {
   return val ? val.v : null;
 }
 
-// ================================================
-// Provider settings (BYOK DeepSeek)
-// ================================================
-const DEEPSEEK_ORIGIN = 'https://api.deepseek.com/*';
-const DEEPSEEK_TIMEOUT = 15000; // DeepSeek chậm hơn gtx — 15s, vẫn < SW idle 30s
-
-// Mirror các option targetLang trong popup
-const LANG_NAMES = {
-  vi: 'Vietnamese', en: 'English', ja: 'Japanese', ko: 'Korean',
-  'zh-CN': 'Simplified Chinese', 'zh-TW': 'Traditional Chinese',
-  fr: 'French', de: 'German', es: 'Spanish', th: 'Thai', ru: 'Russian',
-  pt: 'Portuguese', ar: 'Arabic', hi: 'Hindi', id: 'Indonesian'
-};
-
-function deepSeekSystemPrompt(targetLangName) {
-  return `You are a professional subtitle translator. Translate the user's text into ${targetLangName}. ` +
-    `Preserve tone, line breaks, and stage directions like [applause]. ` +
-    `Reply with ONLY a JSON object of shape {"translation":"...","sourceLang":"<ISO-639-1 source code>"}. No explanations.`;
-}
-
-// Cache key theo provider — gtx và DeepSeek không dùng chung namespace
-function makeCacheKey(provider, text, targetLang) {
-  return `${provider}_${text}_${targetLang}`;
-}
-
-// Đọc cấu hình provider + kiểm tra quyền DeepSeek.
-// Popup có thể bị đóng giữa lúc xin quyền → background phải tự guard:
-// provider=deepseek nhưng chưa grant → effectiveProvider=google, gtx chạy ngay.
-async function getProviderSettings() {
-  const sync = await chrome.storage.sync.get(['provider', 'deepseekModel']);
-  const local = await chrome.storage.local.get(['deepseekApiKey']);
-  const wantsDeepseek = sync.provider === 'deepseek';
-  let granted = false;
-  if (wantsDeepseek && typeof chrome.permissions !== 'undefined') {
-    try {
-      granted = await chrome.permissions.contains({ origins: [DEEPSEEK_ORIGIN] });
-    } catch (error) { /* best-effort */ }
-  }
-  return {
-    provider: wantsDeepseek ? 'deepseek' : 'google',
-    effectiveProvider: (wantsDeepseek && granted) ? 'deepseek' : 'google',
-    deepseekApiKey: local.deepseekApiKey || '',
-    deepseekModel: sync.deepseekModel || 'deepseek-v4-flash'
-  };
+// Cache key cho bản dịch (text + targetLang)
+function makeCacheKey(text, targetLang) {
+  return `${text}_${targetLang}`;
 }
 
 // ================================================
@@ -169,7 +128,7 @@ async function getProviderSettings() {
 // ================================================
 // Dedupe cấp background: content watchdog 12s resend + Translate All
 // queue gửi nhiều message cùng text → chỉ 1 network call, mọi responder
-// chờ chung kết quả. DeepSeek timeout 15s > watchdog → thiếu dedupe = double cost.
+// chờ chung kết quả.
 const bgInflight = new Map(); // cacheKey → [sendResponse, ...]
 
 chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
@@ -185,17 +144,9 @@ chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
 });
 
 async function handleTranslate(text, targetLang, sendResponse) {
-  let settings;
-  try {
-    settings = await getProviderSettings();
-  } catch (error) {
-    // storage lỗi hiếm gặp → trả fallback, không để rejection treo kênh message
-    sendResponse({ translatedText: `[${targetLang}] ${text}`, isFallback: true });
-    return;
-  }
-  const cacheKey = makeCacheKey(settings.effectiveProvider, text, targetLang);
+  const cacheKey = makeCacheKey(text, targetLang);
 
-  // Cùng text + targetLang + provider → gộp về 1 request
+  // Cùng text + targetLang → gộp về 1 request
   if (bgInflight.has(cacheKey)) {
     bgInflight.get(cacheKey).push(sendResponse);
     return;
@@ -203,7 +154,7 @@ async function handleTranslate(text, targetLang, sendResponse) {
   bgInflight.set(cacheKey, [sendResponse]);
 
   try {
-    const result = await doTranslate(text, targetLang, settings, cacheKey);
+    const result = await doTranslate(text, targetLang, cacheKey);
     const responders = bgInflight.get(cacheKey) || [sendResponse];
     for (const cb of responders) cb(result);
   } catch (error) {
@@ -215,7 +166,7 @@ async function handleTranslate(text, targetLang, sendResponse) {
   }
 }
 
-async function doTranslate(text, targetLang, settings, cacheKey) {
+async function doTranslate(text, targetLang, cacheKey) {
   // 1. RAM cache
   const cached = translationCache.get(cacheKey);
   if (cached !== null) {
@@ -239,9 +190,8 @@ async function doTranslate(text, targetLang, settings, cacheKey) {
     await new Promise(resolve => setTimeout(resolve, waitTime));
   }
 
-  // 4. Translate theo provider + fallback chain (cache bên trong theo
-  // provider thực tế đã dịch)
-  return translateWithFallback(text, targetLang, settings);
+  // 4. Google Translate + fallback chain (cache bên trong)
+  return translateWithFallback(text, targetLang);
 }
 
 // ================================================
@@ -272,24 +222,12 @@ chrome.commands.onCommand.addListener(async (command) => {
 // ================================================
 // Translate with Retry & Fallback
 // ================================================
-async function translateWithFallback(text, targetLang, settings) {
+async function translateWithFallback(text, targetLang) {
   try {
-    let result, usedProvider;
+    const result = await translateWithRetry(text, targetLang);
 
-    if (settings.effectiveProvider === 'deepseek') {
-      const chain = await translateWithDeepSeekChain(text, targetLang, settings);
-      result = chain.result;
-      usedProvider = chain.usedProvider;
-    } else {
-      result = await translateWithRetry(text, targetLang);
-      usedProvider = 'google';
-    }
-
-    // Cache theo provider THỰC TẾ đã dịch — gtx fallback không nhiễm
-    // namespace deepseek và ngược lại (deepseek lỗi → gtx cache riêng)
-    const effectiveKey = makeCacheKey(usedProvider, text, targetLang);
-    translationCache.set(effectiveKey, result.translatedText);
-    storePersistent(effectiveKey, result.translatedText);
+    translationCache.set(makeCacheKey(text, targetLang), result.translatedText);
+    storePersistent(makeCacheKey(text, targetLang), result.translatedText);
 
     return { translatedText: result.translatedText, detectedLang: result.detectedLang };
   } catch (error) {
@@ -305,7 +243,7 @@ async function translateWithRetry(text, targetLang, translateFn = translateText,
   try {
     return await translateFn(text, targetLang);
   } catch (error) {
-    // Lỗi cấu hình/auth (401/402/400/422) — retry 3 lần chỉ spam API
+    // Guard chung: lỗi đánh dấu không retry được thì ném ngay, không spam API
     if (error && error.retryable === false) throw error;
     if (retryCount < RETRY_CONFIG.maxRetries) {
       const delay = Math.min(
@@ -317,31 +255,6 @@ async function translateWithRetry(text, targetLang, translateFn = translateText,
       return translateWithRetry(text, targetLang, translateFn, retryCount + 1);
     }
     throw new Error(`Translation failed after ${RETRY_CONFIG.maxRetries} retries: ${error.message}`);
-  }
-}
-
-// DeepSeek (retry nếu lỗi tạm thời) → Google Translate → fallback
-async function translateWithDeepSeekChain(text, targetLang, settings) {
-  try {
-    const result = await translateWithRetry(
-      text, targetLang,
-      (t, l) => translateWithDeepSeek(t, l, settings)
-    );
-    // Dịch thành công → xóa lỗi auth đang hiển thị ở popup
-    chrome.storage.local.remove('deepseekError').catch(() => {});
-    return { result, usedProvider: 'deepseek' };
-  } catch (error) {
-    const msg = error.message || String(error);
-    if (error && error.retryable === false) {
-      console.warn(`DeepSeek: ${msg} — chuyển sang Google Translate`);
-      if (error.authError) {
-        chrome.storage.local.set({ deepseekError: msg }).catch(() => {});
-      }
-    } else {
-      console.warn(`DeepSeek lỗi tạm thời — chuyển sang Google Translate: ${msg}`);
-    }
-    const result = await translateWithRetry(text, targetLang);
-    return { result, usedProvider: 'google' };
   }
 }
 
@@ -381,80 +294,3 @@ async function translateText(text, targetLang) {
   }
 }
 
-// ================================================
-// DeepSeek API (BYOK) — OpenAI-compatible chat completions
-// ================================================
-async function translateWithDeepSeek(text, targetLang, settings) {
-  if (!settings.deepseekApiKey) {
-    const err = new Error('DeepSeek API key chưa được cấu hình trong popup');
-    err.retryable = false;
-    throw err;
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEEPSEEK_TIMEOUT);
-
-  try {
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${settings.deepseekApiKey}`
-      },
-      body: JSON.stringify({
-        model: settings.deepseekModel,
-        messages: [
-          { role: 'system', content: deepSeekSystemPrompt(LANG_NAMES[targetLang] || targetLang) },
-          { role: 'user', content: text }
-        ],
-        temperature: 0.3,
-        max_tokens: 1024,
-        stream: false,
-        // Thinking mode BẬT MẶC ĐỊNH trên V4 — phải tắt, không thì cháy
-        // latency + reasoning tokens cho phụ đề ngắn
-        thinking: { type: 'disabled' },
-        response_format: { type: 'json_object' }
-      }),
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      const err = new Error(`DeepSeek HTTP ${response.status}: ${response.statusText}`);
-      // 400/401/402/422 = lỗi cấu hình/auth cố định — không retry 3×15s
-      err.retryable = !(response.status === 400 || response.status === 401 ||
-                        response.status === 402 || response.status === 422);
-      err.authError = response.status === 401 || response.status === 402;
-      throw err;
-    }
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content) {
-      const err = new Error('DeepSeek trả về response rỗng');
-      err.retryable = false;
-      throw err;
-    }
-
-    // Prompt yêu cầu JSON {"translation","sourceLang"} — parse fail thì
-    // dùng raw text, prefix ngôn ngữ nguồn (B7) chỉ mất chứ không hỏng
-    try {
-      const parsed = JSON.parse(content);
-      return {
-        translatedText: parsed.translation || content.trim(),
-        detectedLang: parsed.sourceLang || null
-      };
-    } catch (parseError) {
-      return { translatedText: content.trim(), detectedLang: null };
-    }
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      const err = new Error('DeepSeek request timed out');
-      err.retryable = true;
-      throw err;
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}

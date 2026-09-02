@@ -1,0 +1,7 @@
+# CodeGraph — local machine index, never commit
+.codegraph/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

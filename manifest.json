@@ -6,9 +6,6 @@
   "permissions": [
     "storage"
   ],
-  "optional_host_permissions": [
-    "https://api.deepseek.com/*"
-  ],
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://translate.googleapis.com/*"
