@@ -68,8 +68,6 @@ Theo thang bằng chứng của dự án, không gắn VERIFIED-HIGH cho toàn b
 7. Observer nên có owner và vòng đời rõ ràng; scan tài nguyên không đồng nghĩa tạo observer mới.
 8. Kiểm thử bằng đồng hồ giả giúp tái hiện timeout và concurrency mà không chờ mạng thật.
 
-## Nguồn tham chiếu
-
 ## Quy trình push qua no-mistakes
 
 Anh yêu cầu dùng no-mistakes để gate và push các thay đổi của đợt rà soát này.
