@@ -10,6 +10,7 @@
   const REQUEST_EVENT = 'ybs-player-data-request';
   let sent = false;
   let lastPayload = null;
+  let pollTimer = null;
 
   function dispatch(payload) {
     lastPayload = payload;
@@ -30,8 +31,11 @@
       return;
     }
     if (!data) return;
-    const tracks = Array.isArray(data.captionTracks)
-      ? data.captionTracks.map(t => ({
+    const videoId = new URL(location.href).searchParams.get('v');
+    if (!videoId || data.videoDetails?.videoId !== videoId) return;
+    const captionTracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks || data.captionTracks;
+    const tracks = Array.isArray(captionTracks)
+      ? captionTracks.map(t => ({
           langCode: t.languageCode,
           kind: t.kind,
           name: t.name && t.name.simpleText ? t.name.simpleText : t.name,
@@ -40,14 +44,18 @@
       : [];
     const title = data.videoDetails && data.videoDetails.title ? data.videoDetails.title : '';
     if (tracks.length > 0 || title) {
-      dispatch({ title, tracks });
+      dispatch({ title, tracks, videoId });
     }
   }
 
   // transcript panel (isolated world) chạy muộn hơn — nếu đã miss event ban đầu
   // thì request lại, ta re-dispatch payload đã cache.
   window.addEventListener(REQUEST_EVENT, () => {
-    if (lastPayload) window.dispatchEvent(new CustomEvent(EVENT, { detail: lastPayload }));
+    if (lastPayload?.videoId === new URL(location.href).searchParams.get('v')) {
+      window.dispatchEvent(new CustomEvent(EVENT, { detail: lastPayload }));
+    } else {
+      extract();
+    }
   });
 
   extract();
@@ -55,9 +63,10 @@
   // Player response có thể tới muộn → poll tối đa 10 lần × 500ms
   let remaining = 10;
   function poll() {
-    if (remaining <= 0) return;
+    clearTimeout(pollTimer);
+    if (sent || remaining <= 0) return;
     remaining--;
-    setTimeout(() => {
+    pollTimer = setTimeout(() => {
       extract();
       if (!sent) poll();
     }, 500);
@@ -66,10 +75,10 @@
 
   // SPA navigation — reset trạng thái, chờ dữ liệu mới
   document.addEventListener('yt-navigate-finish', () => {
+    clearTimeout(pollTimer);
     sent = false;
     lastPayload = null; // tránh re-dispatch title/tracks của video cũ
     remaining = 10;
-    setTimeout(extract, 0);
-    poll();
+    pollTimer = setTimeout(() => { extract(); poll(); }, 0);
   });
 })();

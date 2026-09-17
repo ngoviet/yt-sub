@@ -106,16 +106,18 @@ function prunePersistentCache() {
 }
 prunePersistentCache();
 
-function storePersistent(cacheKey, translatedText) {
+function storePersistent(cacheKey, result) {
   chrome.storage.local.set({
-    [tcKey(cacheKey)]: { v: translatedText, ts: Date.now() }
+    [tcKey(cacheKey)]: { v: result.translatedText, detectedLang: result.detectedLang, ts: Date.now() }
   }).catch(() => { /* best-effort */ });
 }
 
 async function getPersistent(cacheKey) {
   const entry = await chrome.storage.local.get(tcKey(cacheKey));
   const val = entry[tcKey(cacheKey)];
-  return val ? val.v : null;
+  return val && typeof val.v === 'string'
+    ? { translatedText: val.v, detectedLang: val.detectedLang || null }
+    : null;
 }
 
 // Cache key cho bản dịch (text + targetLang)
@@ -153,16 +155,17 @@ async function handleTranslate(text, targetLang, sendResponse) {
   }
   bgInflight.set(cacheKey, [sendResponse]);
 
+  let result;
   try {
-    const result = await doTranslate(text, targetLang, cacheKey);
-    const responders = bgInflight.get(cacheKey) || [sendResponse];
-    for (const cb of responders) cb(result);
+    result = await doTranslate(text, targetLang, cacheKey);
   } catch (error) {
-    // doTranslate luôn resolve fallback — không tới đây trong thực tế
-    const responders = bgInflight.get(cacheKey) || [sendResponse];
-    for (const cb of responders) cb({ translatedText: `[${targetLang}] ${text}`, isFallback: true });
-  } finally {
-    bgInflight.delete(cacheKey);
+    result = { translatedText: `[${targetLang}] ${text}`, isFallback: true };
+  }
+  const responders = bgInflight.get(cacheKey) || [sendResponse];
+  bgInflight.delete(cacheKey);
+  for (const cb of responders) {
+    // Tab đóng không được làm mất phản hồi của các tab còn lại.
+    try { cb(result); } catch (error) { /* kênh đã đóng */ }
   }
 }
 
@@ -170,7 +173,7 @@ async function doTranslate(text, targetLang, cacheKey) {
   // 1. RAM cache
   const cached = translationCache.get(cacheKey);
   if (cached !== null) {
-    return { translatedText: cached };
+    return cached;
   }
 
   // 2. Persistent cache (storage.local) — set ngược RAM
@@ -178,19 +181,13 @@ async function doTranslate(text, targetLang, cacheKey) {
     const persisted = await getPersistent(cacheKey);
     if (persisted) {
       translationCache.set(cacheKey, persisted);
-      return { translatedText: persisted };
+      return persisted;
     }
   } catch (error) {
     // storage lỗi → cứ translate tiếp
   }
 
-  // 3. Rate limit
-  if (!rateLimiter.isAllowed()) {
-    const waitTime = rateLimiter.getWaitTime();
-    await new Promise(resolve => setTimeout(resolve, waitTime));
-  }
-
-  // 4. Google Translate + fallback chain (cache bên trong)
+  // Rate limit áp dụng tại mỗi lần gọi mạng, kể cả retry.
   return translateWithFallback(text, targetLang);
 }
 
@@ -226,8 +223,8 @@ async function translateWithFallback(text, targetLang) {
   try {
     const result = await translateWithRetry(text, targetLang);
 
-    translationCache.set(makeCacheKey(text, targetLang), result.translatedText);
-    storePersistent(makeCacheKey(text, targetLang), result.translatedText);
+    translationCache.set(makeCacheKey(text, targetLang), result);
+    storePersistent(makeCacheKey(text, targetLang), result);
 
     return { translatedText: result.translatedText, detectedLang: result.detectedLang };
   } catch (error) {
@@ -262,7 +259,11 @@ async function translateWithRetry(text, targetLang, translateFn = translateText,
 // Google Translate API
 // ================================================
 async function translateText(text, targetLang) {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+  // Sau khi chờ phải xin lại slot; nhiều request có thể thức cùng lúc.
+  while (!rateLimiter.isAllowed()) {
+    await new Promise(resolve => setTimeout(resolve, rateLimiter.getWaitTime()));
+  }
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
 
   // Timeout 8s — request treo thì retry không bao giờ chạy, kênh message treo vô hạn
   const controller = new AbortController();

@@ -113,6 +113,18 @@ cd yt-sub
 # chrome://extensions/ → Load unpacked → chọn folder này
 ```
 
+## Kiểm tra hồi quy
+
+Chạy test bằng Node.js, không cần cài dependency:
+
+```bash
+node --test tests/regression.test.cjs
+```
+
+Test dùng Chrome/DOM stub và đồng hồ giả để kiểm tra cache, rate limiter, watchdog và race condition khi chuyển video/ngôn ngữ.
+Test này không thay thế kiểm tra extension trên YouTube thật.
+Xem [báo cáo rà soát và bài học](docs/codebase-review-2026-09-17.md) để biết phạm vi thay đổi và các giới hạn còn lại.
+
 ## 📝 License
 
 MIT License
