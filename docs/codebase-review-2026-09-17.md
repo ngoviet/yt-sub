@@ -68,6 +68,7 @@ Theo thang bằng chứng của dự án, không gắn VERIFIED-HIGH cho toàn b
 7. Observer nên có owner và vòng đời rõ ràng; scan tài nguyên không đồng nghĩa tạo observer mới.
 8. Kiểm thử bằng đồng hồ giả giúp tái hiện timeout và concurrency mà không chờ mạng thật.
 9. Khi đơn giản hóa popup, giữ phạm vi tùy chỉnh đã được duyệt: font size 0.8–1.5 và bottom 10–120, giữ nguyên step và mặc định.
+10. Caption event chỉ mang bản dịch thành công; timeout và `isFallback` giữ `translated: null` để Translate All còn dịch lại, độc lập với chuỗi fallback hiển thị trên overlay.
 
 ## Quy trình push qua no-mistakes
 

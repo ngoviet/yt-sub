@@ -200,6 +200,55 @@ test('capture accepts translation updates for the same caption', () => {
   assert.equal(h.api.state.segments[0].translated, 'xin chao');
 });
 
+for (const scenario of [
+  { name: 'timeout', response: null, translated: null, overlay: 'hello' },
+  { name: 'fallback', response: { translatedText: '[vi] hello', isFallback: true }, translated: null, overlay: '[vi] hello' },
+  { name: 'success', response: { translatedText: 'xin chao', detectedLang: 'en' }, translated: 'xin chao', overlay: 'xin chao' },
+  { name: 'unchanged success', response: { translatedText: 'hello', detectedLang: 'en' }, translated: 'hello', overlay: 'hello' }
+]) {
+  test(`caption event preserves retry eligibility after ${scenario.name}`, async () => {
+    const content = harness('content/content.js');
+    const transcript = harness('content/transcript.js');
+    transcript.api.state.sourceMode = 'capture';
+    const captured = [];
+    content.document.addEventListener('ybs-caption', event => {
+      captured.push(event.detail);
+      transcript.document.dispatchEvent(event);
+    });
+    const segment = Object.assign(element(), { textContent: 'hello', isConnected: true });
+    content.document.querySelectorAll = selector => selector === '.ytp-caption-segment' ? [segment] : [];
+    content.video.currentTime = 7;
+    content.eval('isEnabled = true; handleSubtitleUpdate();');
+    await content.timer.tick(150);
+    assert.equal(captured[0].translated, null);
+    if (scenario.response) {
+      content.messages[0].cb(scenario.response);
+      await flush();
+    } else {
+      await content.timer.tick(24000);
+      assert.equal(content.messages.length, 2);
+    }
+    assert.equal(captured.length, 2);
+    assert.equal(captured[1].translated, scenario.translated);
+    assert.equal(captured[1].t, 7);
+    assert.equal(transcript.api.state.segments.length, 1);
+    const row = transcript.api.state.segments[0];
+    assert.equal(row.translated, scenario.translated);
+    assert.equal(content.document.body.children.at(-1).querySelector('.ybs-line-trans').textContent, scenario.overlay);
+    transcript.api.translateAll();
+    if (scenario.translated === null) {
+      assert.equal(transcript.messages.length, 1);
+      assert.equal(transcript.messages[0].request.text, 'hello');
+      transcript.messages[0].cb({ translatedText: 'recovered', detectedLang: 'en' });
+      await flush();
+      assert.equal(row.translated, 'recovered');
+      assert.equal(transcript.api.state.translating, false);
+    } else {
+      assert.equal(transcript.messages.length, 0);
+    }
+  });
+}
+
 test('transcript watchdog ends queue after second unanswered attempt', async () => {
   const h = harness('content/transcript.js');
   h.api.state.segments = [{ t: 1, text: 'hi' }];

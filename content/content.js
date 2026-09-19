@@ -298,7 +298,7 @@ function handleSubtitleUpdate() {
         if (!st || st.text !== text || !seg.isConnected) return; // stale
         st.translated = (res && res.translatedText) ? res.translatedText : text;
         st.lang = (res && res.detectedLang) ? res.detectedLang : null;
-        dispatchCaptionEvent(st.text, st.translated, st.lang, st.t);
+        dispatchCaptionEvent(st.text, res && res.translatedText && !res.isFallback ? res.translatedText : null, st.lang, st.t);
 
         if (subtitleMode === 'translated-only') {
           refreshTranslatedOverlay();
