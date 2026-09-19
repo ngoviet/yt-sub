@@ -1,5 +1,8 @@
 # Kế Hoạch Cải Tiến YouTube Bilingual Subtitles
 
+> Tài liệu lịch sử trước đợt hardening, không phải hợp đồng hiện hành.
+> Provider và cách dùng hiện tại: [README](../README.md); cache, watchdog và queue: [báo cáo hardening](../docs/codebase-review-2026-09-17.md).
+
 > **Cập nhật 2026-08-22:** Plan gốc (7 item, v1.2) đã implement 6/7. Kế hoạch mới: v1.4 (bugs) → v1.5 (quick wins) → v1.6 (BYOK + transcript panel). Chi tiết đầy đủ: `C:\Users\Vokupt\.claude\plans\hi-staged-cocke.md`.
 
 ---

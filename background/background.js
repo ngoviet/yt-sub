@@ -129,8 +129,8 @@ function makeCacheKey(text, targetLang) {
 // Message Listener
 // ================================================
 // Dedupe cấp background: content watchdog 12s resend + Translate All
-// queue gửi nhiều message cùng text → chỉ 1 network call, mọi responder
-// chờ chung kết quả.
+// queue gửi nhiều message cùng text → mọi responder chờ chung một tác vụ,
+// kể cả các lần retry của tác vụ đó.
 const bgInflight = new Map(); // cacheKey → [sendResponse, ...]
 
 chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
@@ -294,4 +294,3 @@ async function translateText(text, targetLang) {
     clearTimeout(timer);
   }
 }
-

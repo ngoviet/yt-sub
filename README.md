@@ -53,6 +53,16 @@
    - **Original**: Chỉ hiện phụ đề gốc
 5. Chọn ngôn ngữ đích
 
+Extension chỉ dùng Google Translate (gtx); không cần API key và không còn lựa chọn DeepSeek.
+Khi nâng cấp, cấu hình/API key DeepSeek đã lưu không còn được đọc hoặc sử dụng; phiên bản này không tự xóa chúng khỏi storage.
+
+### Transcript
+
+Trên trang watch, mở panel bằng `Alt+B` và chọn **Translate All** để dịch các dòng chưa có bản dịch thành công.
+Nếu một dòng gặp timeout hoặc fallback, nhấn **Translate All** lại sau khi mạng phục hồi để thử lại.
+Đổi ngôn ngữ đích sẽ dừng lượt dịch hiện tại và xóa bản dịch cũ trong panel; nhấn **Translate All** để dịch sang ngôn ngữ mới.
+Chuyển video sẽ xóa transcript cũ và bỏ qua kết quả đang chờ của video trước.
+
 ## ⚙️ Cấu Hình
 
 | Setting | Mô Tả | Mặc Định |
@@ -99,7 +109,7 @@ yt-sub/
 │   ├── icon48.png
 │   └── icon128.png
 └── plans/
-    └── improvement-plan.md    # Development roadmap
+    └── improvement-plan.md    # Kế hoạch và lịch sử trước đợt hardening
 ```
 
 ## 🔧 Development

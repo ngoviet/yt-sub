@@ -5,14 +5,15 @@
 Đã đọc service worker, overlay, transcript, MAIN-world bridge, popup, manifest và tài liệu dự án.
 Thay đổi tập trung vào độ đúng của luồng bất đồng bộ và giảm tác vụ trùng.
 Không có build step trong dự án.
-Không đổi provider dịch, permission hoặc cấu hình linter/formatter.
+Việc đơn giản hóa provider và hướng dẫn nâng cấp được mô tả trong [README](../README.md#-cách-sử-dụng).
+Manifest bỏ quyền host tùy chọn của provider đã loại bỏ; không đổi cấu hình linter/formatter.
 
 ## Các thay đổi
 
 | Khu vực | Trước | Sau | Bằng chứng |
 | --- | --- | --- | --- |
 | Rate limiter | Request hết slot chỉ chờ một lần rồi chạy cùng lúc; retry không tính slot | Mỗi lần gọi mạng phải lấy được slot, kể cả retry | Test 25 request đồng thời và retry |
-| Cache | Chỉ lưu text, mất detectedLang khi cache hit | RAM/local lưu cả ngôn ngữ nguồn; đọc được cache cũ | Test cache qua service worker mới |
+| Cache | Chỉ lưu text, mất detectedLang khi cache hit | Xem hợp đồng cache bên dưới | Test cache qua service worker mới |
 | Dedupe background | Một callback lỗi có thể làm các subscriber khác mất phản hồi | Tách lỗi từng callback | Test kênh đóng |
 | Watchdog | Resend sau 12 giây nhưng không có deadline tiếp theo | Resend một lần, resolve null ở 24 giây nếu không có callback; bắt lỗi đồng bộ | Test cả overlay và transcript |
 | Overlay lifecycle | Timer/debounce tồn tại sau khi dừng; request cũ xóa inflight mới | Hủy timer, reset poll budget, kiểm tra đúng Promise trước khi xóa | Test toggle và inflight |
@@ -26,7 +27,22 @@ Không đổi provider dịch, permission hoặc cấu hình linter/formatter.
 Debug mode nhận giá trị false đúng qua message popup.
 Tham số targetLang được encode khi tạo URL dịch.
 
+## Hợp đồng dịch và cache
+
+`background/background.js` gộp các request đang chờ có cùng `makeCacheKey(text, targetLang)` vào một tác vụ dịch chung; tác vụ này vẫn có thể gọi mạng nhiều lần do retry.
+Mỗi lần gọi mạng, kể cả retry, phải lấy slot từ rate limiter.
+`RETRY_CONFIG` cho phép một lần gọi đầu và tối đa ba lần retry, chờ lần lượt 1, 2, 4 giây; mỗi fetch có timeout 8 giây.
+Response thành công gồm `translatedText` và `detectedLang` (có thể null); fallback có `isFallback: true` và không được cache.
+
+RAM giữ response thành công; storage.local lưu `{ v, detectedLang, ts }` với key `tc:<text>_<targetLang>`.
+Entry thiếu `detectedLang` vẫn đọc được nếu đúng key hiện tại, trả ngôn ngữ nguồn null.
+Các key cũ có namespace provider (`tc:google_…`, `tc:deepseek_…`) không được migrate hoặc tra cứu bằng key mới.
+Chính sách prune và giới hạn trong phiên worker dài được ghi ở mục [giới hạn](#giới-hạn-và-việc-tiếp-theo).
+Test `legacy persistent cache remains readable` trong [regression.test.cjs](../tests/regression.test.cjs) chỉ kiểm tra entry thiếu metadata ở key hiện tại, không kiểm tra migration namespace.
+
 ## Kiểm chứng
+
+Các kết quả dưới đây là ghi nhận của đợt rà soát ban đầu, không phải kết quả chạy lại bộ test hiện tại.
 
 - `node --test tests/regression.test.cjs`: 17/17 PASS.
 - `node --check`: PASS cho cả 5 file JavaScript production.
@@ -69,6 +85,7 @@ Theo thang bằng chứng của dự án, không gắn VERIFIED-HIGH cho toàn b
 8. Kiểm thử bằng đồng hồ giả giúp tái hiện timeout và concurrency mà không chờ mạng thật.
 9. Khi đơn giản hóa popup, giữ phạm vi tùy chỉnh đã được duyệt: font size 0.8–1.5 và bottom 10–120, giữ nguyên step và mặc định.
 10. Caption event chỉ mang bản dịch thành công; timeout và `isFallback` giữ `translated: null` để Translate All còn dịch lại, độc lập với chuỗi fallback hiển thị trên overlay.
+11. Khả năng đọc schema cache cũ không đồng nghĩa migrate key cũ; đối chiếu cả `makeCacheKey()` và fixture hồi quy trước khi mô tả tương thích nâng cấp.
 
 ## Quy trình push qua no-mistakes
 

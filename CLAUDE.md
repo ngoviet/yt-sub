@@ -1,7 +1,7 @@
 # CLAUDE.md — yt-sub (YouTube Bilingual Subtitles)
 
 Chrome extension **Manifest V3** dịch phụ đề YouTube sang song ngữ realtime.
-Chỉ dùng **Google Translate** (gtx endpoint `translate.googleapis.com`) làm provider dịch — không có DeepSeek.
+Provider và hướng dẫn nâng cấp: xem [README](README.md#-cách-sử-dụng).
 
 ## Cấu Trúc
 
@@ -32,15 +32,10 @@ content.js  --chrome.runtime.sendMessage({action:'translate', text, targetLang})
 background.js:
   1. RAM LRU cache (Map, max 1000)
   2. Persistent cache (storage.local, prefix 'tc:') — set ngược RAM
-  3. Rate limiter (10 req/1s)
-  4. translateText() → gtx + AbortController 8s timeout
-  5. translateWithRetry() (3 lần, exponential backoff 1s→5s)
-  6. Graceful fallback → `[lang] text` (KHÔNG cache fallback)
+  3. translateWithFallback() → translateWithRetry() → translateText()
 ```
 
-- **Cache key** = `` `${text}_${targetLang}` `` (background.js `makeCacheKey`).
-- **bgInflight** (Map cacheKey→[sendResponse]): dedupe request trùng text — content watchdog 12s resend + Translate All queue chỉ tốn 1 network call.
-- Response shape: `{ translatedText, detectedLang? }`. `detectedLang` từ gtx `data[2]` (sl=auto) → content.js dùng prefix `[EN]`.
+Hợp đồng cache, retry, dedupe và watchdog: xem [chi tiết hardening](docs/codebase-review-2026-09-17.md#hợp-đồng-dịch-và-cache).
 
 ## Cơ Chế Chính
 
@@ -53,10 +48,10 @@ background.js:
 - SPA nav: bắt `yt-navigate-finish` (rẻ hơn urlObserver full body).
 
 ### Transcript panel (transcript.js)
-- Nguồn 1: `yt-player-data.js` (MAIN world) đọc `ytInitialPlayerResponse.captionTracks` → CustomEvent `ybs-player-data`.
+- Metadata track/title: `yt-player-data.js` (MAIN world) đọc player response của video hiện tại → CustomEvent `ybs-player-data`; xem `extract()` để biết đường dẫn dữ liệu và fallback.
 - Nguồn 2: `PerformanceObserver` bắt URL `/api/timedtext?fmt=json3` (bỏ `aAppend=`, `tlang=`, `translate_uri`) → fetch JSON3.
 - PoToken fail (200+rỗng) → **capture mode**: nghe `ybs-caption` events từ content.js.
-- Translate All: queue concurrency 1, cancelable, watchdog 12s, progress bar.
+- Translate All: queue concurrency 1, cancelable, progress bar; vòng đời queue và watchdog nằm trong [báo cáo hardening](docs/codebase-review-2026-09-17.md#các-thay-đổi).
 
 ### MAIN world bridge (yt-player-data.js)
 - Chạy `world: MAIN`, `run_at: document_start` — isolated world KHÔNG thấy `window.ytInitialPlayerResponse`.
@@ -68,7 +63,7 @@ background.js:
 |-----|------|----------|
 | `isEnabled`, `targetLang`, `subtitleMode`, `debugMode`, `fontSizeScale`, `overlayBottom`, `accentColor` | sync | Settings (nhỏ) |
 | `transcriptOpen` | sync | Trạng thái panel |
-| `tc:<cacheKey>` | local | Cache dịch (prefix `tc:`, max 2000, prune khi SW khởi động) |
+| `tc:<cacheKey>` | local | [Hợp đồng cache](docs/codebase-review-2026-09-17.md#hợp-đồng-dịch-và-cache) |
 
 ## Phím Tắt (manifest commands)
 
@@ -81,12 +76,12 @@ background.js:
 - Comment/giải thích tiếng Việt; code, tên biến/hàm, commit message tiếng Anh.
 - Conventional Commits: `feat:` / `fix:` / `refactor:` / `docs:` / `chore:`.
 - Selector YouTube gom 1 chỗ (constants) vì YouTube hay đổi class — sửa 1 chỗ.
-- Content scripts bọc IIFE, transcript.js expose `window.__ybsTranscript` cho test harness.
+- `transcript.js` và `yt-player-data.js` bọc IIFE; `transcript.js` expose `window.__ybsTranscript` cho test harness.
 
 ## Test / Build
 
-- **Không có build step** — Load unpacked: `chrome://extensions/` → Developer mode → Load unpacked → chọn `d:/code/yt-sub`.
-- Test harness (Node chrome-stub + Playwright stub) mô tả trong `plans/improvement-plan.md` — không có file test trong repo.
+- **Không có build step** — xem [cài đặt từ source](README.md#từ-source-code).
+- Test hiện hành và lệnh chạy: [kiểm tra hồi quy](README.md#kiểm-tra-hồi-quy).
 - Verify bằng tay: mở video YouTube có CC → bật toggle → đổi mode/ngôn ngữ → overlay hiển thị; `Alt+B` → transcript panel.
 
 ## Lưu ý
