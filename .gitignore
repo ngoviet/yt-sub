@@ -5,3 +5,8 @@
 .DS_Store
 Thumbs.db
 *.log
+
+# no-mistakes test agent live-browser artifacts (never commit)
+.live-profile/
+live-check.cjs
+live-content.cjs
