@@ -67,6 +67,7 @@ Theo thang bằng chứng của dự án, không gắn VERIFIED-HIGH cho toàn b
 6. Deduplicate caption theo identity không được loại bỏ cập nhật bản dịch của chính caption đó.
 7. Observer nên có owner và vòng đời rõ ràng; scan tài nguyên không đồng nghĩa tạo observer mới.
 8. Kiểm thử bằng đồng hồ giả giúp tái hiện timeout và concurrency mà không chờ mạng thật.
+9. Khi đơn giản hóa popup, giữ phạm vi tùy chỉnh đã được duyệt: font size 0.8–1.5 và bottom 10–120, giữ nguyên step và mặc định.
 
 ## Quy trình push qua no-mistakes
 
