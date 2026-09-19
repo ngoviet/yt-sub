@@ -1,0 +1,12 @@
+# CodeGraph — local machine index, never commit
+.codegraph/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+
+# no-mistakes test agent live-browser artifacts (never commit)
+.live-profile/
+live-check.cjs
+live-content.cjs

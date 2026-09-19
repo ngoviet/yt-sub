@@ -16,7 +16,6 @@
 |-----------|--------|
 | 🌐 **Dịch realtime** | Dịch phụ đề YouTube ngay khi phát |
 | 🔤 **Chế độ song ngữ** | Hiển thị cả phụ đề gốc và bản dịch |
-| 🤖 **DeepSeek BYOK** | Dùng API key DeepSeek của bạn (V4 flash/pro), fallback tự động sang Google Translate |
 | 📜 **Transcript panel** | Bảng transcript trong trang (Alt+B), click-jump, Translate All, export SRT/VTT/TXT |
 | 🔄 **LRU Cache** | Tối ưu hiệu suất với cache giới hạn |
 | ⚡ **Rate Limiting** | Giới hạn request để tránh bị block |
@@ -54,6 +53,16 @@
    - **Original**: Chỉ hiện phụ đề gốc
 5. Chọn ngôn ngữ đích
 
+Extension chỉ dùng Google Translate (gtx); không cần API key và không còn lựa chọn DeepSeek.
+Khi nâng cấp, cấu hình/API key DeepSeek đã lưu không còn được đọc hoặc sử dụng; phiên bản này không tự xóa chúng khỏi storage.
+
+### Transcript
+
+Trên trang watch, mở panel bằng `Alt+B` và chọn **Translate All** để dịch các dòng chưa có bản dịch thành công.
+Nếu một dòng gặp timeout hoặc fallback, nhấn **Translate All** lại sau khi mạng phục hồi để thử lại.
+Đổi ngôn ngữ đích sẽ dừng lượt dịch hiện tại và xóa bản dịch cũ trong panel; nhấn **Translate All** để dịch sang ngôn ngữ mới.
+Chuyển video sẽ xóa transcript cũ và bỏ qua kết quả đang chờ của video trước.
+
 ## ⚙️ Cấu Hình
 
 | Setting | Mô Tả | Mặc Định |
@@ -61,21 +70,18 @@
 | Enable Extension | Bật/tắt extension | ✅ On |
 | Display Mode | Chế độ hiển thị phụ đề | Bilingual |
 | Target Language | Ngôn ngữ dịch | Vietnamese |
-| Translation Provider | Google Translate hoặc DeepSeek (BYOK) | Google Translate |
-| DeepSeek Model | Model dùng khi provider = DeepSeek | deepseek-v4-flash |
 | Debug Mode | Bật logging | ❌ Off |
 
-### DeepSeek (BYOK)
+### Phím Tắt
 
-1. Chọn **DeepSeek (BYOK)** trong Translation Provider — Chrome hỏi quyền truy cập `api.deepseek.com`
-2. Dán API key (lưu trong `chrome.storage.local`, không sync) — xem [platform.deepseek.com](https://platform.deepseek.com)
-3. Nếu API key sai → tự động fallback Google Translate + thông báo lỗi auth trong popup
-4. Phím tắt: `Alt+T` bật/tắt dịch, `Alt+Shift+T` xoay chế độ, `Alt+B` bật/tắt transcript
+- `Alt+T` bật/tắt dịch
+- `Alt+Shift+T` xoay chế độ hiển thị (bilingual / translated / original)
+- `Alt+B` bật/tắt transcript
 
 ## 🛠️ Công Nghệ
 
 - **Manifest V3** - Chrome Extension API mới nhất
-- **Google Translate API + DeepSeek API** - Dịch thuật realtime (fallback chain)
+- **Google Translate API** - Dịch thuật realtime (gtx endpoint)
 - **MutationObserver** - Theo dõi phụ đề YouTube
 - **PerformanceObserver** - Intercept timedtext (po-token) cho transcript
 - **LRU Cache** - Tối ưu bộ nhớ
@@ -87,7 +93,7 @@
 yt-sub/
 ├── manifest.json              # Cấu hình extension
 ├── background/
-│   └── background.js          # Service worker (translation, cache, rate limit, DeepSeek)
+│   └── background.js          # Service worker (translation, cache, rate limit)
 ├── content/
 │   ├── content.js             # Content script (UI, overlay, caption events)
 │   ├── overlay.css            # Overlay styling
@@ -103,7 +109,7 @@ yt-sub/
 │   ├── icon48.png
 │   └── icon128.png
 └── plans/
-    └── improvement-plan.md    # Development roadmap
+    └── improvement-plan.md    # Kế hoạch và lịch sử trước đợt hardening
 ```
 
 ## 🔧 Development
@@ -116,6 +122,18 @@ cd yt-sub
 # Load vào Chrome
 # chrome://extensions/ → Load unpacked → chọn folder này
 ```
+
+## Kiểm tra hồi quy
+
+Chạy test bằng Node.js, không cần cài dependency:
+
+```bash
+node --test tests/regression.test.cjs
+```
+
+Test dùng Chrome/DOM stub và đồng hồ giả để kiểm tra cache, rate limiter, watchdog và race condition khi chuyển video/ngôn ngữ.
+Test này không thay thế kiểm tra extension trên YouTube thật.
+Xem [báo cáo rà soát và bài học](docs/codebase-review-2026-09-17.md) để biết phạm vi thay đổi và các giới hạn còn lại.
 
 ## 📝 License
 

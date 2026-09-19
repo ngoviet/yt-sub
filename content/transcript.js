@@ -12,6 +12,10 @@
   const PLAYER_EVENT     = 'ybs-player-data';
 
   let targetLang = 'vi';
+  let resourceObserver = null;
+  let loadGeneration = 0;
+  let queueGeneration = 0;
+  let transcriptController = null;
 
   const state = {
     open: false,
@@ -112,12 +116,13 @@
     if (typeof performance !== 'undefined') {
       performance.getEntriesByType('resource').forEach(handleResourceEntry);
     }
-    if (typeof PerformanceObserver === 'undefined') return;
+    if (resourceObserver || typeof PerformanceObserver === 'undefined') return;
     try {
-      new PerformanceObserver((list) => {
+      resourceObserver = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) handleResourceEntry(entry);
-      }).observe({ type: 'resource', buffered: true });
-    } catch (e) { /* test env / cũ */ }
+      });
+      resourceObserver.observe({ type: 'resource', buffered: true });
+    } catch (e) { resourceObserver = null; }
   }
 
   function handleResourceEntry(entry) {
@@ -125,6 +130,11 @@
     const url = entry.name;
     if (!url.includes('/api/timedtext')) return;
     if (!url.includes('fmt=json3')) return;
+    // Resource buffer còn chứa URL của video trước sau SPA navigation.
+    try {
+      const videoId = new URL(location.href).searchParams.get('v');
+      if (!videoId || new URL(url).searchParams.get('v') !== videoId) return;
+    } catch (e) { return; }
     // Rolling-window refetch: lặp lại với đoạn bị cắt → bỏ
     if (url.includes('aAppend=')) return;
     // Track đã auto-translate sẵn → bỏ, không dịch lại
@@ -147,9 +157,14 @@
     const best = state.candidates.filter(c => c.isManual)[0] || state.candidates[0];
     if (!best) return;
     const url = best.url;
+    const generation = ++loadGeneration;
+    if (transcriptController) transcriptController.abort();
+    const controller = new AbortController();
+    transcriptController = controller;
     state.sourceMode = 'loading';
-    const segments = await fetchTranscript(url);
-    if (state.sourceMode !== 'loading') return; // nav / reset giữa chừng
+    const segments = await fetchTranscript(url, controller);
+    if (generation !== loadGeneration) return;
+    transcriptController = null;
     if (segments && segments.length > 0) {
       state.segments = segments;
       state.sourceMode = 'player';
@@ -163,9 +178,10 @@
     }
   }
 
-  async function fetchTranscript(url) {
+  async function fetchTranscript(url, controller = new AbortController()) {
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await fetch(url, { credentials: 'include' });
+      const res = await fetch(url, { credentials: 'include', signal: controller.signal });
       if (!res.ok) return null;
       const raw = await res.text();
       if (!raw.trim()) return null; // 200 + rỗng
@@ -181,6 +197,8 @@
       return out;
     } catch (e) {
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -191,11 +209,11 @@
     const { text, translated, lang, t } = e.detail || {};
     if (!text) return;
     const key = `${t}|${text}`;
-    if (state.lastCaptionKey === key) return; // caption đang hiện, chưa đổi
     state.lastCaptionKey = key;
     const existing = state.segments.find(s => s.t === t && s.text === text);
     if (existing) {
-      if (translated) existing.translated = translated;
+      if (!translated || existing.translated === translated) return;
+      existing.translated = translated;
     } else {
       state.segments.push({ t, endT: t + MAX_CAPTURE_GAP, text, translated });
     }
@@ -221,7 +239,7 @@
     for (const seg of state.segments) {
       const li = document.createElement('li');
       li.className = 'ybs-row';
-      if (seg.t <= state.activeT) li.classList.add('active');
+      if (seg.t === state.activeT) li.classList.add('active');
 
       const time = document.createElement('span');
       time.className = 'ybs-time';
@@ -298,15 +316,17 @@
     state.cancelTranslate = false;
     translateAllBtn.textContent = 'Cancel';
     showProgress(0, pending.length);
-    runQueue(pending);
+    runQueue(pending, ++queueGeneration, targetLang);
   }
 
-  async function runQueue(pending) {
+  async function runQueue(pending, generation, language) {
     const total = pending.length;
     let done = 0;
     for (const seg of pending) {
+      if (generation !== queueGeneration) return;
       if (state.cancelTranslate) break;
-      const res = await sendTranslate(seg.text, targetLang);
+      const res = await sendTranslate(seg.text, language);
+      if (generation !== queueGeneration) return;
       if (state.cancelTranslate) break;
       if (res && res.translatedText && !res.isFallback) {
         seg.translated = res.translatedText;
@@ -333,15 +353,18 @@
         resolve(res);
       };
       const send = () => {
+        if (responded) return;
         attempts++;
         if (attempts > 2) { done(null); return; } // resend tối đa 1 lần
-        chrome.runtime.sendMessage({ action: 'translate', text, targetLang }, (response) => {
-          if (chrome.runtime.lastError) { done(null); return; }
-          done(response);
-        });
+        watchdog = setTimeout(send, 12000);
+        try {
+          chrome.runtime.sendMessage({ action: 'translate', text, targetLang }, (response) => {
+            if (chrome.runtime.lastError) { done(null); return; }
+            done(response);
+          });
+        } catch (error) { done(null); }
       };
       send();
-      watchdog = setTimeout(send, 12000);
     });
   }
 
@@ -442,6 +465,11 @@
 
   // ── Lifecycle ──────────────────────────────────────────────────
   function onNav() {
+    loadGeneration++;
+    queueGeneration++;
+    if (transcriptController) transcriptController.abort();
+    transcriptController = null;
+    clearTimeout(renderTimer);
     state.cancelTranslate = true;
     state.segments = [];
     state.candidates = [];
@@ -450,6 +478,8 @@
     state.sourceMode = 'none';
     state.tracks = [];
     state.title = '';
+    titleEl.textContent = '';
+    titleEl.title = '';
     state.activeT = -1;
     hideProgress();
     if (state.translating) {
@@ -494,7 +524,16 @@
 
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'sync') return;
-      if (changes.targetLang) targetLang = changes.targetLang.newValue;
+      if (changes.targetLang && changes.targetLang.newValue !== targetLang) {
+        targetLang = changes.targetLang.newValue || 'vi';
+        queueGeneration++;
+        state.translating = false;
+        state.cancelTranslate = false;
+        translateAllBtn.textContent = 'Translate All';
+        hideProgress();
+        for (const seg of state.segments) seg.translated = null;
+        renderList();
+      }
       if (changes.transcriptOpen && changes.transcriptOpen.newValue !== undefined) {
         setPanelOpen(Boolean(changes.transcriptOpen.newValue));
       }

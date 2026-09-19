@@ -71,7 +71,7 @@ chrome.runtime.onMessage.addListener((request) => {
     targetLang   = request.targetLang;
     subtitleMode = request.subtitleMode;
     isEnabled    = request.isEnabled;
-    debugMode    = request.debugMode || debugMode;
+    debugMode    = request.debugMode ?? debugMode;
     if (request.fontSizeScale) fontSizeScale = request.fontSizeScale;
     if (request.overlayBottom) overlayBottom = request.overlayBottom;
     if (request.accentColor)   accentColor   = request.accentColor;
@@ -111,6 +111,7 @@ function applyAccentColor() {
 
 // ── Reset mọi trạng thái dịch (settings đổi / SPA nav) ────────────────
 function resetTranslationState() {
+  clearTimeout(debounceTimer);
   segmentStates.clear();
   inflight.clear();
   translationGeneration++;
@@ -151,6 +152,8 @@ document.addEventListener('yt-navigate-finish', onUrlChange);
 
 // ── Observer setup ───────────────────────────────────────────────────
 function waitForPlayerAndObserve() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
   if (subtitleObserver) return;
 
   const captionArea = document.querySelector(CAPTION_AREA_SELECTOR);
@@ -198,8 +201,10 @@ function waitForPlayerAndObserve() {
 }
 
 function stopObserving() {
+  clearTimeout(debounceTimer);
   clearTimeout(pollTimer);
   pollTimer = null;
+  pollAttempts = 0;
   if (subtitleObserver) {
     subtitleObserver.disconnect();
     subtitleObserver = null;
@@ -247,6 +252,7 @@ function handleSubtitleUpdate() {
 
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
+    if (!isEnabled || subtitleMode === 'original-only') return;
     const allSegments = findCaptionSegments();
 
     if (allSegments.length === 0) {
@@ -292,7 +298,7 @@ function handleSubtitleUpdate() {
         if (!st || st.text !== text || !seg.isConnected) return; // stale
         st.translated = (res && res.translatedText) ? res.translatedText : text;
         st.lang = (res && res.detectedLang) ? res.detectedLang : null;
-        dispatchCaptionEvent(st.text, st.translated, st.lang, st.t);
+        dispatchCaptionEvent(st.text, res && res.translatedText && !res.isFallback ? res.translatedText : null, st.lang, st.t);
 
         if (subtitleMode === 'translated-only') {
           refreshTranslatedOverlay();
@@ -325,20 +331,25 @@ function requestTranslation(text, targetLang) {
       resolve(res);
     };
     const send = () => {
+      if (responded) return;
       attempts++;
       if (attempts > 2) { done(null); return; } // watchdog resend tối đa 1 lần
-      chrome.runtime.sendMessage({ action: 'translate', text, targetLang }, (response) => {
-        if (chrome.runtime.lastError) { done(null); return; }
-        done(response);
-      });
+      watchdog = setTimeout(send, 12000);
+      try {
+        chrome.runtime.sendMessage({ action: 'translate', text, targetLang }, (response) => {
+          if (chrome.runtime.lastError) { done(null); return; }
+          done(response);
+        });
+      } catch (error) { done(null); }
     };
     send();
     // SW có thể bị kill giữa chừng → callback không bao giờ chạy → resend 1 lần
-    watchdog = setTimeout(send, 12000);
   });
 
   inflight.set(key, promise);
-  promise.catch(() => {}).finally(() => inflight.delete(key));
+  promise.finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key);
+  });
   return promise;
 }
 
