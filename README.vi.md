@@ -158,8 +158,10 @@ Mọi đóng góp đều được chào đón. Hãy tạo pull request hoặc b�
 ## Ủng hộ dự án
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ngoviet/.github/main/assets/support/banner.svg" width="720" alt="Built and maintained by one person in Việt Nam">
+  <img src="https://raw.githubusercontent.com/ngoviet/.github/main/assets/support/banner-v2.svg" width="560" alt="Built and maintained by one person in Việt Nam">
 </p>
+
+<p align="center">Một người Việt tự xây dựng và duy trì, miễn phí và mã nguồn mở. Sự ủng hộ của bạn giúp hỗ trợ thêm thiết bị, sửa lỗi nhanh hơn và ra bản mới đều đặn.</p>
 
 <p align="center">
   <a href="https://buymeacoffee.com/ngoviet"><img src="https://raw.githubusercontent.com/ngoviet/.github/main/assets/support/btn-coffee.svg" height="56" alt="Buy me a coffee"></a>
@@ -175,7 +177,7 @@ Mọi đóng góp đều được chào đón. Hãy tạo pull request hoặc b�
 
 <p align="center"><b>Ví tiền mã hoá, chỉ gửi qua mạng BNB Smart Chain (BEP20):</b><br><code>0xcbf0402b232cb24b4d998f09a4884f87b5f74750</code></p>
 
-<p align="center"><sub>🇻🇳 VietQR: quét bằng app ngân hàng bất kỳ, nội dung <code>Ung ho yt-sub</code>. Cảm ơn bạn đã giúp dự án tiếp tục phát triển!</sub></p>
+<p align="center">🇻🇳 VietQR: quét bằng app ngân hàng bất kỳ, nội dung <code>Ung ho yt-sub</code>. Cảm ơn bạn đã giúp dự án tiếp tục phát triển!</p>
 <!-- support:end -->
 
 ## Giấy phép
