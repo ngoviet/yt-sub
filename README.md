@@ -2,7 +2,7 @@
 
 <!-- readme-axi type=tool -->
 
-![](https://img.shields.io/badge/Manifest-V3-blue) ![](https://img.shields.io/badge/Chrome-Extension-green) ![](https://img.shields.io/badge/License-MIT-orange)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue) ![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-green) ![License: MIT](https://img.shields.io/badge/License-MIT-orange)
 
 **English** · [Tiếng Việt](README.vi.md)
 
